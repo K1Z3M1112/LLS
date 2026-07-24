@@ -13,13 +13,22 @@ on:
         type: choice
         options: [ debug, release ]
         default: debug
+      build_format:
+        description: "Output format (APK or AAB)"
+        type: choice
+        options: [ apk, aab ]
+        default: apk
+      clean_build:
+        description: "Run 'clean' before building?"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build APK
+    name: Build Android App
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,6 +49,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
 
       - name: Install NDK & CMake
         run: |
@@ -67,28 +79,39 @@ jobs:
           echo "$LSFG_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore/release.jks"
           echo "keystore_path=$RUNNER_TEMP/keystore/release.jks" >> "$GITHUB_ENV"
 
-      - name: Build debug APK
-        if: ${{ github.event.inputs.build_type != 'release' }}
-        run: ./gradlew :app:assembleDebug --stacktrace
+      - name: Clean Project (Optional)
+        if: ${{ github.event.inputs.clean_build == 'true' }}
+        run: ./gradlew clean
 
-      - name: Build release APK
+      - name: Build debug
+        if: ${{ github.event.inputs.build_type != 'release' }}
+        run: |
+          if [ "${{ github.event.inputs.build_format }}" = "aab" ]; then
+            ./gradlew :app:bundleDebug --stacktrace
+          else
+            ./gradlew :app:assembleDebug --stacktrace
+          fi
+
+      - name: Build release
         if: ${{ github.event.inputs.build_type == 'release' }}
         env:
           ORG_GRADLE_PROJECT_LSFGAndroid_STORE_FILE: ${{ env.keystore_path }}
           ORG_GRADLE_PROJECT_LSFGAndroid_STORE_PASSWORD: ${{ secrets.LSFG_STORE_PASSWORD }}
           ORG_GRADLE_PROJECT_LSFGAndroid_KEY_ALIAS: ${{ secrets.LSFG_KEY_ALIAS }}
           ORG_GRADLE_PROJECT_LSFGAndroid_KEY_PASSWORD: ${{ secrets.LSFG_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --stacktrace
-
-      - name: Locate APKs
-        id: locate
         run: |
-          echo "path=$(find app/build/outputs/apk -name '*.apk' | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event.inputs.build_format }}" = "aab" ]; then
+            ./gradlew :app:bundleRelease --stacktrace
+          else
+            ./gradlew :app:assembleRelease --stacktrace
+          fi
 
-      - name: Upload APK artifact
+      - name: Upload App artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lsfg-android-apk-${{ github.event.inputs.build_type || 'debug' }}-${{ github.sha }}
-          path: LSFG-Android-Application/app/build/outputs/apk/**/*.apk
+          name: lsfg-android-${{ github.event.inputs.build_type || 'debug' }}-${{ github.event.inputs.build_format || 'apk' }}-${{ github.sha }}
+          path: |
+            LSFG-Android-Application/app/build/outputs/apk/**/*.apk
+            LSFG-Android-Application/app/build/outputs/bundle/**/*.aab
           if-no-files-found: error
           retention-days: 14
