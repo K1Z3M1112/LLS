@@ -30,6 +30,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          # FIX: cache Gradle dependencies between runs to cut ~3 min off CI time.
+          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -37,6 +39,34 @@ jobs:
       - name: Install NDK 27.0.12077973 and CMake 3.22.1
         run: |
           sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
+
+      # FIX: cache the NDK build output (.o/.a intermediates + generated CMake).
+      # The NDK compile step is the single largest CI cost (~8-12 min cold).
+      # Cache key invalidates on: OS, NDK version, CMakeLists hash, and all C++
+      # source files. When a source file changes only the dirty TU recompiles.
+      - name: Cache NDK build intermediates
+        uses: actions/cache@v4
+        with:
+          path: |
+            android-app/.cxx
+            android-app/app/.cxx
+          key: ndk-${{ runner.os }}-ndk27-cmake322-${{ hashFiles('android-app/app/src/main/cpp/CMakeLists.txt', 'android-app/app/src/main/cpp/**/*.cpp', 'android-app/app/src/main/cpp/**/*.hpp') }}
+          restore-keys: |
+            ndk-${{ runner.os }}-ndk27-cmake322-
+            ndk-${{ runner.os }}-ndk27-
+
+      # FIX: cache the Gradle build cache (separate from the wrapper/deps cache
+      # provided by setup-java above). This covers incremental compilation of
+      # Kotlin and dexing, saving another 1-2 min on unchanged Kotlin files.
+      - name: Cache Gradle build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android-app/**/*.gradle.kts', 'android-app/**/*.gradle', 'android-app/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
       - name: Grant execute permission for gradlew
         working-directory: android-app
@@ -58,11 +88,11 @@ jobs:
 
       - name: Build debug APK
         working-directory: android-app
-        run: ./gradlew :app:assembleDebug --stacktrace
+        run: ./gradlew :app:assembleDebug --stacktrace --build-cache
 
       - name: Build release APK
         working-directory: android-app
-        run: ./gradlew :app:assembleRelease --stacktrace
+        run: ./gradlew :app:assembleRelease --stacktrace --build-cache
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
