@@ -705,10 +705,16 @@ bool NnapiPostProcessor::processRgba8888(const uint8_t *src,
         return false;
     }
 
-    for (uint32_t y = 0; y < inH; ++y) {
-        std::memcpy(inputBuf + y * inW * 4U,
-                    src + y * srcStrideBytes,
-                    inW * 4U);
+    // Use a single contiguous memcpy when source stride matches packed width;
+    // avoids N individual function calls and lets the runtime use SIMD paths.
+    if (srcStrideBytes == inW * 4U) {
+        std::memcpy(inputBuf, src, static_cast<size_t>(inH) * inW * 4U);
+    } else {
+        for (uint32_t y = 0; y < inH; ++y) {
+            std::memcpy(inputBuf + y * inW * 4U,
+                        src + y * srcStrideBytes,
+                        inW * 4U);
+        }
     }
 
     ANeuralNetworksExecution *execution = nullptr;
@@ -734,10 +740,15 @@ bool NnapiPostProcessor::processRgba8888(const uint8_t *src,
         return false;
     }
 
-    for (uint32_t y = 0; y < outH; ++y) {
-        std::memcpy(dst + y * dstStrideBytes,
-                    outputBuf + y * outW * 4U,
-                    outW * 4U);
+    // Same optimisation for the output copy.
+    if (dstStrideBytes == outW * 4U) {
+        std::memcpy(dst, outputBuf, static_cast<size_t>(outH) * outW * 4U);
+    } else {
+        for (uint32_t y = 0; y < outH; ++y) {
+            std::memcpy(dst + y * dstStrideBytes,
+                        outputBuf + y * outW * 4U,
+                        outW * 4U);
+        }
     }
     return true;
 }

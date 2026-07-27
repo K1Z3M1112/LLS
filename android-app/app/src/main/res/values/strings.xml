@@ -88,6 +88,8 @@
     <string name="param_multiplier_desc">Number of frames produced per real frame. 2 = one interpolated frame between each pair. 3–4 recommended on mobile.</string>
     <string name="param_flow_scale">Flow scale</string>
     <string name="param_flow_scale_desc">Internal motion estimation resolution. Lower = faster but less accurate.</string>
+    <string name="param_render_resolution_scale">Render resolution</string>
+    <string name="param_render_resolution_scale_desc">Percentage of the display\'s native resolution to capture and render at. Lower values cut GPU cost across capture, frame-gen and every post-processing pass, at the cost of a softer image. Takes effect on the next capture (re)start.</string>
     <string name="param_performance_mode">Performance mode (LSFG 3.1P)</string>
     <string name="param_performance_mode_desc">Use the faster, lower-quality shader variant. Recommended on mid-range GPUs.</string>
     <string name="param_hdr">HDR mode</string>

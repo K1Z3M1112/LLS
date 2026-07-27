@@ -369,14 +369,21 @@ class LsfgForegroundService : Service() {
                 // overlay surface back into MediaProjection. On Orange Pi /
                 // RK3588 Android builds, that mirror bootstrap can make the
                 // framegen path capture its own overlay frames.
+                val cfg = LsfgPreferences(this).load()
+                // Render resolution scale shrinks the actual capture/context buffers
+                // (not just a post-process pass), so both the ImageReader/VirtualDisplay
+                // size below and the native context width/height must use the same
+                // scaled dimensions — activeRenderW/H and the output surface stay at
+                // the full display size (see the geometry-change check further down).
+                val (scaledW, scaledH) = scaledRenderSize(w, h, cfg.renderResolutionScale)
+
                 if (cap != null) {
                     LsfgLog.i(TAG, "Starting ImageReader capture first to consume MediaProjection token")
                     cap.setLsfgNativeInputEnabled(false)
-                    cap.setLsfgMode(w, h)
+                    cap.setLsfgMode(scaledW, scaledH)
                 }
-                ov.updateStatus("LSFG: starting ${w}×${h}…")
+                ov.updateStatus("LSFG: starting ${scaledW}×${scaledH} (of ${w}×${h})…")
 
-                val cfg = LsfgPreferences(this).load()
                 val cacheDir = File(filesDir, "spirv").absolutePath
                 val pacing = PacingDefaults.forPreset(
                     cfg.pacingPreset,
@@ -385,8 +392,8 @@ class LsfgForegroundService : Service() {
                 val rc = runCatching {
                     NativeBridge.initContext(
                         cacheDir = cacheDir,
-                        width = w,
-                        height = h,
+                        width = scaledW,
+                        height = scaledH,
                         multiplier = cfg.multiplier,
                         flowScale = cfg.flowScale,
                         performance = cfg.performanceMode,
@@ -431,7 +438,11 @@ class LsfgForegroundService : Service() {
                         activeRenderH = h
                         cap?.setLsfgNativeInputEnabled(true)
                         if (isPrivilegedCapture) {
-                            pendingPrivilegedVideoStart = ShizukuVideoStart(w, h, cfg)
+                            // Frame-gen is active and its native context was sized to
+                            // scaledW/scaledH (see initContext above) — the privileged
+                            // video capture must deliver frames at that same size, not
+                            // the full display resolution.
+                            pendingPrivilegedVideoStart = ShizukuVideoStart(scaledW, scaledH, cfg)
                         }
                         ov.updateStatus("LSFG: frame-gen active ${w}×${h} ×${cfg.multiplier}")
                         // If the user launched this session via the Benchmark
@@ -629,6 +640,18 @@ class LsfgForegroundService : Service() {
      * Runs on a worker thread because destroyContext blocks on vkDeviceWaitIdle
      * and initContext can take 100-300ms while it recompiles the shader chain.
      */
+    /**
+     * Applies [LsfgPreferences.renderResolutionScale] to a display/surface size,
+     * clamped to [LsfgPreferences.MIN_RENDER_RESOLUTION_SCALE] so capture/context
+     * buffers never collapse to 0 pixels. Both dimensions are floored at 1px.
+     */
+    private fun scaledRenderSize(w: Int, h: Int, scale: Float): Pair<Int, Int> {
+        val s = scale.coerceIn(LsfgPreferences.MIN_RENDER_RESOLUTION_SCALE, 1.0f)
+        val sw = (w * s).toInt().coerceAtLeast(1)
+        val sh = (h * s).toInt().coerceAtLeast(1)
+        return sw to sh
+    }
+
     private fun reinitLsfgContext(width: Int = lastSurfaceW, height: Int = lastSurfaceH) {
         if (shuttingDown) {
             LsfgLog.i(TAG, "reinitLsfgContext skipped — shutting down")
@@ -694,11 +717,16 @@ class LsfgForegroundService : Service() {
                     cfg.pacingPreset,
                     PacingDefaults.Params(cfg.emaAlpha, cfg.outlierRatio, cfg.vsyncSlackMs, cfg.queueDepth),
                 )
+                // See the comment in onSurfaceReady: targetW/targetH here track the
+                // actual display/surface size (used below for geometry-change
+                // detection via activeRenderW/H) — the scaled pair is what actually
+                // gets captured and fed to the native context.
+                val (scaledW, scaledH) = scaledRenderSize(targetW, targetH, cfg.renderResolutionScale)
                 val rc = runCatching {
                     NativeBridge.initContext(
                         cacheDir = cacheDir,
-                        width = targetW,
-                        height = targetH,
+                        width = scaledW,
+                        height = scaledH,
                         multiplier = cfg.multiplier,
                         flowScale = cfg.flowScale,
                         performance = cfg.performanceMode,
@@ -747,11 +775,11 @@ class LsfgForegroundService : Service() {
                     if (rc == 0) {
                         activeRenderW = targetW
                         activeRenderH = targetH
-                        cap?.setLsfgMode(targetW, targetH)
+                        cap?.setLsfgMode(scaledW, scaledH)
                         cap?.setLsfgNativeInputEnabled(true)
                         val reinitTarget = targetPkgPending ?: LsfgPreferences(this).load().targetPackage
-                        startShizukuVideo(shizukuCapture, reinitTarget, targetW, targetH, cfg)
-                        startRootVideo(rootCapture, reinitTarget, targetW, targetH, cfg)
+                        startShizukuVideo(shizukuCapture, reinitTarget, scaledW, scaledH, cfg)
+                        startRootVideo(rootCapture, reinitTarget, scaledW, scaledH, cfg)
                         mainHandler.post {
                             ov.updateStatus("LSFG: ${lastSurfaceW}×${lastSurfaceH} ×${cfg.multiplier} flow=${"%.2f".format(cfg.flowScale)}")
                         }

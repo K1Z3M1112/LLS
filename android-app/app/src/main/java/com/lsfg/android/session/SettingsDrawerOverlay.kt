@@ -499,6 +499,51 @@ class SettingsDrawerOverlay(
             })
         })
 
+        frameGenSection.addView(sectionSpacer(10))
+
+        val renderResValue = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "${(initial.renderResolutionScale * 100f).toInt()}%"
+        }
+        frameGenSection.addView(
+            sliderRow(
+                labelText = "Render resolution",
+                valueView = renderResValue,
+            ),
+        )
+        frameGenSection.addView(SeekBar(ctx).apply {
+            max = 20
+            progress = (initial.renderResolutionScale * 20f).toInt().coerceIn(0, 20)
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            var dragging = false
+            var pendingRenderRes = initial.renderResolutionScale
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    val f = (p / 20f).coerceIn(0f, 1f)
+                    renderResValue.text = "${(f * 100f).toInt()}%"
+                    if (fromUser) {
+                        pendingRenderRes = f
+                        if (!dragging) {
+                            prefs.setRenderResolutionScale(f)
+                            Log.i(TAG, "live: renderResolutionScale tap → $f")
+                            liveParamsListener?.onParamsChanged()
+                        }
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { dragging = true }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    dragging = false
+                    prefs.setRenderResolutionScale(pendingRenderRes)
+                    Log.i(TAG, "live: renderResolutionScale release → $pendingRenderRes")
+                    liveParamsListener?.onParamsChanged()
+                }
+            })
+        })
+
         panel.addView(divider())
 
         // ---- Pacing (separate section — was previously nested inside frame gen) ---------
@@ -1805,6 +1850,16 @@ class SettingsDrawerOverlay(
             setPadding(0, dp(8), 0, dp(6))
         }
         val perRow = if (presets.size <= 4) presets.size else (presets.size + 1) / 2
+        val buttons = mutableListOf<Button>()
+        fun paint(selected: T) {
+            buttons.forEachIndexed { i, btn ->
+                val isSel = presets[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
         var i = 0
         while (i < presets.size) {
             val end = minOf(i + perRow, presets.size)
@@ -1819,14 +1874,16 @@ class SettingsDrawerOverlay(
                     text = label
                     isAllCaps = false
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setTextColor(if (preset == initial) COLOR_PANEL_BG else COLOR_ON_SURFACE)
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
-                        setColor(if (preset == initial) COLOR_PRIMARY else COLOR_CHIP_BG)
                         cornerRadius = dp(10).toFloat()
                     }
-                    setOnClickListener { onChange(preset) }
+                    setOnClickListener {
+                        onChange(preset)
+                        paint(preset)
+                    }
                 }
+                buttons += btn
                 row.addView(
                     btn,
                     LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -1841,6 +1898,7 @@ class SettingsDrawerOverlay(
             ))
             i = end
         }
+        paint(initial)
         return outer
     }
 
@@ -1857,19 +1915,31 @@ class SettingsDrawerOverlay(
             GpuPostProcessingStage.BEFORE_LSFG to "Real first",
             GpuPostProcessingStage.AFTER_LSFG to "Final frames",
         )
+        val buttons = mutableListOf<Button>()
+        fun paint(selected: GpuPostProcessingStage) {
+            buttons.forEachIndexed { i, btn ->
+                val isSel = stages[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
         stages.forEach { (stage, label) ->
             val btn = Button(ctx).apply {
                 text = label
                 isAllCaps = false
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(if (stage == initial) COLOR_PANEL_BG else COLOR_ON_SURFACE)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
-                    setColor(if (stage == initial) COLOR_PRIMARY else COLOR_CHIP_BG)
                     cornerRadius = dp(10).toFloat()
                 }
-                setOnClickListener { onChange(stage) }
+                setOnClickListener {
+                    onChange(stage)
+                    paint(stage)
+                }
             }
+            buttons += btn
             row.addView(
                 btn,
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -1878,6 +1948,7 @@ class SettingsDrawerOverlay(
                 },
             )
         }
+        paint(initial)
         return row
     }
 
@@ -1916,6 +1987,16 @@ class SettingsDrawerOverlay(
                 GpuPostProcessingMethod.DEBAND to "Deband",
             )
         }
+        val buttons = mutableListOf<Button>()
+        fun paint(selected: GpuPostProcessingMethod) {
+            buttons.forEachIndexed { i, btn ->
+                val isSel = methods[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
         methods.chunked(2).forEach { rowMethods ->
             val row = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -1926,14 +2007,16 @@ class SettingsDrawerOverlay(
                     text = label
                     isAllCaps = false
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                    setTextColor(if (method == initial) COLOR_PANEL_BG else COLOR_ON_SURFACE)
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
-                        setColor(if (method == initial) COLOR_PRIMARY else COLOR_CHIP_BG)
                         cornerRadius = dp(10).toFloat()
                     }
-                    setOnClickListener { onChange(method) }
+                    setOnClickListener {
+                        onChange(method)
+                        paint(method)
+                    }
                 }
+                buttons += btn
                 row.addView(
                     btn,
                     LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -1946,6 +2029,7 @@ class SettingsDrawerOverlay(
             }
             container.addView(row)
         }
+        paint(initial)
         return container
     }
 
