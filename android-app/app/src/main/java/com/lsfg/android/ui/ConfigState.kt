@@ -35,6 +35,7 @@ private val shared: MutableStateFlow<LsfgConfig> = MutableStateFlow(
         framegenFp16 = false,
         targetPackage = null,
         captureSource = CaptureSource.MEDIA_PROJECTION,
+        renderResolutionScale = 1.0f,
         legalAccepted = false,
         fpsCounterEnabled = false,
         frameGraphEnabled = false,

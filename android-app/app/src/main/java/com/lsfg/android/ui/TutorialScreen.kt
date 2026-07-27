@@ -65,32 +65,32 @@ private data class TutorialStep(
  *       image = R.drawable.tutorial_step_1,
  *   ),
  *
- * Drop the PNG/JPG files into LSFG-Android/app/src/main/res/drawable-nodpi/
+ * Drop the PNG/JPG files into DeepFG/app/src/main/res/drawable-nodpi/
  * (any density-agnostic folder works) and reference them via R.drawable.<name>.
  * Leave [image] = null to render a text-only step.
  */
 private val tutorialSteps: List<TutorialStep> = listOf(
     TutorialStep(
         title = "1. Accessibility permissions — Step 1",
-        description = "LSFG-Android needs accessibility permissions to drive the overlay and frame generation correctly. Open your device's Accessibility settings either directly from the system Settings app, or by tapping the accessibility icon in the top-right corner of the LSFG-Android home screen.",
+        description = "DeepFG needs accessibility permissions to drive the overlay and frame generation correctly. Open your device's Accessibility settings either directly from the system Settings app, or by tapping the accessibility icon in the top-right corner of the DeepFG home screen.",
         image = R.drawable.tutorial_step_1,
     ),
 
     TutorialStep(
         title = "1. Accessibility permissions — Step 2",
-        description = "In the Accessibility settings list, find and tap \"LSFG Touch Passthrough\".",
+        description = "In the Accessibility settings list, find and tap \"DeepFG Touch Passthrough\".",
         image = R.drawable.tutorial_step_2,
     ),
 
     TutorialStep(
         title = "1. Accessibility permissions — Step 3",
-        description = "Toggle the accessibility permission on for LSFG-Android, exactly as shown in the screenshot.",
+        description = "Toggle the accessibility permission on for DeepFG, exactly as shown in the screenshot.",
         image = R.drawable.tutorial_step_3,
     ),
 
     TutorialStep(
         title = "1. Accessibility permissions — Step 4",
-        description = "If the toggle won't turn on, your device is likely blocking restricted settings for sideloaded apps. Open the Android app info screen for LSFG-Android and look at the top-right corner — you'll see a menu icon (highlighted by the red square in the screenshot). Tap it and enable the option that appears (usually \"Allow restricted settings\"). Once done, go back and repeat the previous step — the accessibility toggle will now turn on.",
+        description = "If the toggle won't turn on, your device is likely blocking restricted settings for sideloaded apps. Open the Android app info screen for DeepFG and look at the top-right corner — you'll see a menu icon (highlighted by the red square in the screenshot). Tap it and enable the option that appears (usually \"Allow restricted settings\"). Once done, go back and repeat the previous step — the accessibility toggle will now turn on.",
         image = R.drawable.tutorial_step_4,
     ),
 
@@ -132,7 +132,7 @@ private val tutorialSteps: List<TutorialStep> = listOf(
 
     TutorialStep(
         title = "4. Overlay & display — Step 1",
-        description = "This section contains all the settings related to the LSFG overlay and how it's displayed on screen.",
+        description = "This section contains all the settings related to the DeepFG overlay and how it's displayed on screen.",
         image = R.drawable.tutorial_step_11,
     ),
 
@@ -174,7 +174,7 @@ private val tutorialSteps: List<TutorialStep> = listOf(
 
     TutorialStep(
         title = "5. Frame generation & pacing — Step 2",
-        description = "These are the settings I consider optimal on top-tier devices such as the Snapdragon 8 Elite Gen 5 — though Flow Scale can safely be pushed up to 1 on those chips. Even on flagship devices I recommend sticking to the Performance variant of LSFG rather than the standard one. Anti-artifacts mode is experimental and I do not recommend enabling it.",
+        description = "These are the settings I consider optimal on top-tier devices such as the Snapdragon 8 Elite Gen 5 — though Flow Scale can safely be pushed up to 1 on those chips. Even on flagship devices I recommend sticking to the Performance variant of frame generation rather than the standard one. Anti-artifacts mode is experimental and I do not recommend enabling it.",
         image = R.drawable.tutorial_step_18,
     ),
 
@@ -186,13 +186,13 @@ private val tutorialSteps: List<TutorialStep> = listOf(
 
     TutorialStep(
         title = "6. Starting the overlay — Step 2",
-        description = "On some Android devices a screen-sharing picker may appear at this point. When it does, choose to share the same app you already selected as the target inside LSFG-Android — not the entire screen.",
+        description = "On some Android devices a screen-sharing picker may appear at this point. When it does, choose to share the same app you already selected as the target inside DeepFG — not the entire screen.",
         image = R.drawable.tutorial_step_20,
     ),
 
     TutorialStep(
         title = "6. Starting the overlay — Step 3",
-        description = "The target app will now launch with the LSFG overlay running on top, and frame generation will be active.",
+        description = "The target app will now launch with the DeepFG overlay running on top, and frame generation will be active.",
         image = R.drawable.tutorial_step_21,
     ),
 

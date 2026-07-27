@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.automirrored.filled.ViewSidebar
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FlashOn
@@ -110,7 +111,7 @@ fun ParamsFrameGenPacingScreen(nav: NavHostController) {
 
             ToggleRow(
                 icon = Icons.Filled.FlashOn,
-                title = "LSFG Frame Gen",
+                title = "DeepFG Frame Gen",
                 description = "Master toggle for frame generation. Off = raw capture passthrough.",
                 checked = state.lsfgEnabled,
                 onCheckedChange = {
@@ -145,6 +146,20 @@ fun ParamsFrameGenPacingScreen(nav: NavHostController) {
                 leadingIcon = Icons.AutoMirrored.Filled.ShowChart,
                 onValueChange = {
                     prefs.setFlowScale(it)
+                    refreshConfigState(prefs)
+                },
+            )
+
+            ValueSlider(
+                title = stringResource(R.string.param_render_resolution_scale),
+                valueDisplay = "${(state.renderResolutionScale * 100f).toInt()}%",
+                description = stringResource(R.string.param_render_resolution_scale_desc),
+                value = state.renderResolutionScale,
+                range = 0f..1f,
+                steps = 19,
+                leadingIcon = Icons.Filled.AspectRatio,
+                onValueChange = {
+                    prefs.setRenderResolutionScale(it)
                     refreshConfigState(prefs)
                 },
             )
@@ -292,8 +307,8 @@ fun ParamsImageQualityScreen(nav: NavHostController) {
                 valueDisplay = "%.2fx".format(state.gpuUpscaleFactor),
                 description = stringResource(R.string.param_gpu_upscale_desc),
                 value = state.gpuUpscaleFactor,
-                range = 1.0f..2.0f,
-                steps = 3,
+                range = 1.0f..4.0f,
+                steps = 5,
                 leadingIcon = Icons.Filled.OpenInFull,
                 onValueChange = {
                     prefs.setGpuUpscaleFactor(it)

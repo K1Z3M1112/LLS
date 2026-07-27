@@ -321,7 +321,7 @@ class SettingsDrawerOverlay(
         header.addView(brandMark())
         header.addView(
             TextView(ctx).apply {
-                text = "LSFG"
+                text = "DeepFG"
                 setTextColor(COLOR_ON_SURFACE)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
                 typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
@@ -345,13 +345,16 @@ class SettingsDrawerOverlay(
         header.addView(closeBtn)
         panel.addView(header)
 
+        panel.addView(sectionSpacer(14))
+        buildQuickControlsSection(panel)
+        panel.addView(divider())
         panel.addView(sectionSpacer(12))
 
         // ---- Frame Generation (expanded by default so drawer shows content on first open) ----
         val frameGenSection = collapsibleSection(panel, "FRAME GENERATION", initiallyExpanded = true)
 
         frameGenSection.addView(switchRow(
-            label = "LSFG Frame Gen",
+            label = "DeepFG Frame Gen",
             initial = initial.lsfgEnabled,
         ) {
             Log.i(TAG, "live: lsfgEnabled=$it")
@@ -494,6 +497,51 @@ class SettingsDrawerOverlay(
                     dragging = false
                     prefs.setFlowScale(pendingFlowScale)
                     Log.i(TAG, "live: flowScale release → $pendingFlowScale")
+                    liveParamsListener?.onParamsChanged()
+                }
+            })
+        })
+
+        frameGenSection.addView(sectionSpacer(10))
+
+        val renderResValue = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "${(initial.renderResolutionScale * 100f).toInt()}%"
+        }
+        frameGenSection.addView(
+            sliderRow(
+                labelText = "Render resolution",
+                valueView = renderResValue,
+            ),
+        )
+        frameGenSection.addView(SeekBar(ctx).apply {
+            max = 20
+            progress = (initial.renderResolutionScale * 20f).toInt().coerceIn(0, 20)
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            var dragging = false
+            var pendingRenderRes = initial.renderResolutionScale
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    val f = (p / 20f).coerceIn(0f, 1f)
+                    renderResValue.text = "${(f * 100f).toInt()}%"
+                    if (fromUser) {
+                        pendingRenderRes = f
+                        if (!dragging) {
+                            prefs.setRenderResolutionScale(f)
+                            Log.i(TAG, "live: renderResolutionScale tap → $f")
+                            liveParamsListener?.onParamsChanged()
+                        }
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { dragging = true }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    dragging = false
+                    prefs.setRenderResolutionScale(pendingRenderRes)
+                    Log.i(TAG, "live: renderResolutionScale release → $pendingRenderRes")
                     liveParamsListener?.onParamsChanged()
                 }
             })
@@ -929,6 +977,94 @@ class SettingsDrawerOverlay(
      * section dividers/spacers between sections remain the caller's responsibility — same visual
      * language as before, just with toggle affordances.
      */
+    /**
+     * ROG Ally Command Center–style quick panel: always-visible brightness + volume
+     * sliders at the very top of the drawer, above the collapsible detail sections.
+     * Brightness uses a per-window override (no WRITE_SETTINGS permission needed);
+     * volume drives the media stream via AudioManager.
+     */
+    private fun buildQuickControlsSection(panel: LinearLayout) {
+        panel.addView(miniHeader("QUICK CONTROLS"))
+        panel.addView(sectionSpacer(6))
+
+        // --- Brightness -----------------------------------------------------------
+        val initialBrightness = runCatching {
+            android.provider.Settings.System.getInt(
+                ctx.contentResolver,
+                android.provider.Settings.System.SCREEN_BRIGHTNESS,
+            )
+        }.getOrDefault(128).coerceIn(0, 255)
+
+        val brightnessValue = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "${(initialBrightness * 100 / 255)}%"
+        }
+        panel.addView(sliderRow(labelText = "Screen brightness", valueView = brightnessValue))
+        panel.addView(SeekBar(ctx).apply {
+            max = 100
+            progress = (initialBrightness * 100 / 255).coerceIn(1, 100)
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    val pct = p.coerceIn(1, 100)
+                    brightnessValue.text = "$pct%"
+                    if (!fromUser) return
+                    val lp = params
+                    val r = root
+                    val wm = hostWindowManager
+                    if (lp != null && r != null && wm != null && r.isAttachedToWindow) {
+                        lp.screenBrightness = pct / 100f
+                        runCatching { wm.updateViewLayout(r, lp) }
+                            .onFailure { Log.w(TAG, "brightness updateViewLayout failed", it) }
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+        })
+
+        panel.addView(sectionSpacer(10))
+
+        // --- Volume -----------------------------------------------------------------
+        val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val maxVol = runCatching {
+            audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+        }.getOrDefault(15).coerceAtLeast(1)
+        val initialVol = runCatching {
+            audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        }.getOrDefault(0).coerceIn(0, maxVol)
+
+        val volumeValue = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "${(initialVol * 100 / maxVol)}%"
+        }
+        panel.addView(sliderRow(labelText = "Media volume", valueView = volumeValue))
+        panel.addView(SeekBar(ctx).apply {
+            max = maxVol
+            progress = initialVol
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    volumeValue.text = "${(p * 100 / maxVol)}%"
+                    if (!fromUser) return
+                    runCatching {
+                        audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, p, 0)
+                    }.onFailure { Log.w(TAG, "setStreamVolume failed", it) }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+        })
+    }
+
     private fun buildPacingControls(
         parent: LinearLayout,
         prefs: LsfgPreferences,
@@ -1805,6 +1941,16 @@ class SettingsDrawerOverlay(
             setPadding(0, dp(8), 0, dp(6))
         }
         val perRow = if (presets.size <= 4) presets.size else (presets.size + 1) / 2
+        val buttons = mutableListOf<Button>()
+        fun paint(selected: T) {
+            buttons.forEachIndexed { i, btn ->
+                val isSel = presets[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
         var i = 0
         while (i < presets.size) {
             val end = minOf(i + perRow, presets.size)
@@ -1819,14 +1965,16 @@ class SettingsDrawerOverlay(
                     text = label
                     isAllCaps = false
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setTextColor(if (preset == initial) COLOR_PANEL_BG else COLOR_ON_SURFACE)
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
-                        setColor(if (preset == initial) COLOR_PRIMARY else COLOR_CHIP_BG)
                         cornerRadius = dp(10).toFloat()
                     }
-                    setOnClickListener { onChange(preset) }
+                    setOnClickListener {
+                        onChange(preset)
+                        paint(preset)
+                    }
                 }
+                buttons += btn
                 row.addView(
                     btn,
                     LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -1841,6 +1989,7 @@ class SettingsDrawerOverlay(
             ))
             i = end
         }
+        paint(initial)
         return outer
     }
 
@@ -1857,19 +2006,31 @@ class SettingsDrawerOverlay(
             GpuPostProcessingStage.BEFORE_LSFG to "Real first",
             GpuPostProcessingStage.AFTER_LSFG to "Final frames",
         )
+        val buttons = mutableListOf<Button>()
+        fun paint(selected: GpuPostProcessingStage) {
+            buttons.forEachIndexed { i, btn ->
+                val isSel = stages[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
         stages.forEach { (stage, label) ->
             val btn = Button(ctx).apply {
                 text = label
                 isAllCaps = false
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(if (stage == initial) COLOR_PANEL_BG else COLOR_ON_SURFACE)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
-                    setColor(if (stage == initial) COLOR_PRIMARY else COLOR_CHIP_BG)
                     cornerRadius = dp(10).toFloat()
                 }
-                setOnClickListener { onChange(stage) }
+                setOnClickListener {
+                    onChange(stage)
+                    paint(stage)
+                }
             }
+            buttons += btn
             row.addView(
                 btn,
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -1878,6 +2039,7 @@ class SettingsDrawerOverlay(
                 },
             )
         }
+        paint(initial)
         return row
     }
 
@@ -1916,6 +2078,16 @@ class SettingsDrawerOverlay(
                 GpuPostProcessingMethod.DEBAND to "Deband",
             )
         }
+        val buttons = mutableListOf<Button>()
+        fun paint(selected: GpuPostProcessingMethod) {
+            buttons.forEachIndexed { i, btn ->
+                val isSel = methods[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
         methods.chunked(2).forEach { rowMethods ->
             val row = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -1926,14 +2098,16 @@ class SettingsDrawerOverlay(
                     text = label
                     isAllCaps = false
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                    setTextColor(if (method == initial) COLOR_PANEL_BG else COLOR_ON_SURFACE)
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
-                        setColor(if (method == initial) COLOR_PRIMARY else COLOR_CHIP_BG)
                         cornerRadius = dp(10).toFloat()
                     }
-                    setOnClickListener { onChange(method) }
+                    setOnClickListener {
+                        onChange(method)
+                        paint(method)
+                    }
                 }
+                buttons += btn
                 row.addView(
                     btn,
                     LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -1946,6 +2120,7 @@ class SettingsDrawerOverlay(
             }
             container.addView(row)
         }
+        paint(initial)
         return container
     }
 
@@ -2243,17 +2418,17 @@ class SettingsDrawerOverlay(
     companion object {
         private const val TAG = "SettingsDrawer"
 
-        // Brand palette (matches ui/theme/Color.kt dark scheme)
-        private const val COLOR_PRIMARY = 0xFF7FE3FF.toInt()
-        private const val COLOR_ACCENT_DEEP = 0xFF4AA8CC.toInt()
-        private const val COLOR_ON_SURFACE = 0xFFE2E8EC.toInt()
-        private const val COLOR_PANEL_BG = 0xF0141B20.toInt()
-        private const val COLOR_PANEL_STROKE = 0x33FFFFFF.toInt()
+        // Brand palette (matches ui/theme/Color.kt dark scheme) — DeepFG / ROG-style dark + orange-red.
+        private const val COLOR_PRIMARY = 0xFFFF7A29.toInt()
+        private const val COLOR_ACCENT_DEEP = 0xFFB23A12.toInt()
+        private const val COLOR_ON_SURFACE = 0xFFECE6E1.toInt()
+        private const val COLOR_PANEL_BG = 0xF014100C.toInt()
+        private const val COLOR_PANEL_STROKE = 0x33FF7A29
         private const val COLOR_DIVIDER = 0x1AFFFFFF
-        private const val COLOR_TRACK_BG = 0xFF232D34.toInt()
-        private const val COLOR_CHIP_BG = 0x337FE3FF
-        private const val COLOR_STOP_BG = 0xFF2A1519.toInt()
-        private const val COLOR_STOP_STROKE = 0x66FF8FA3.toInt()
-        private const val COLOR_STOP_TEXT = 0xFFFF8FA3.toInt()
+        private const val COLOR_TRACK_BG = 0xFF2E251F.toInt()
+        private const val COLOR_CHIP_BG = 0x33FF7A29
+        private const val COLOR_STOP_BG = 0xFF2A1210.toInt()
+        private const val COLOR_STOP_STROKE = 0x66FF6B5B.toInt()
+        private const val COLOR_STOP_TEXT = 0xFFFF6B5B.toInt()
     }
 }

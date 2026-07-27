@@ -28,10 +28,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Gavel
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -48,8 +52,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,7 +72,6 @@ import com.lsfg.android.session.ShizukuCaptureEngine
 import com.lsfg.android.ui.components.IconBadge
 import com.lsfg.android.ui.components.LsfgCard
 import com.lsfg.android.ui.components.LsfgLogoMark
-import com.lsfg.android.ui.components.LsfgSecondaryButton
 import com.lsfg.android.ui.components.SessionCTA
 import com.lsfg.android.ui.components.StatusTone
 import com.lsfg.android.ui.components.StepCard
@@ -80,8 +85,10 @@ fun HomeScreen(nav: NavHostController) {
     val ctx = LocalContext.current
     val prefs = remember { LsfgPreferences(ctx) }
     val state by produceConfigState(prefs).collectAsState()
+    val clipboard = LocalClipboardManager.current
 
     var lastError by remember { mutableStateOf<String?>(null) }
+    var showMoreMenu by remember { mutableStateOf(false) }
     var pendingTargetPkg by remember { mutableStateOf<String?>(null) }
     var pendingCaptureSource by remember { mutableStateOf(CaptureSource.MEDIA_PROJECTION) }
     var showCrashDialog by remember { mutableStateOf(false) }
@@ -126,6 +133,19 @@ fun HomeScreen(nav: NavHostController) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(onClick = {
+                            clipboard.setText(AnnotatedString(crashPreview))
+                            Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                        }) {
+                            Icon(
+                                imageVector = Icons.Filled.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text("Copy")
+                        }
                     }
                 }
             },
@@ -284,6 +304,56 @@ fun HomeScreen(nav: NavHostController) {
                     }
                 },
             )
+            Spacer(Modifier.size(8.dp))
+            Box {
+                IconChip(
+                    icon = Icons.Filled.MoreVert,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    onClick = { showMoreMenu = true },
+                )
+                DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.nav_tutorial)) },
+                        leadingIcon = { Icon(Icons.Filled.School, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            nav.navigate(Routes.TUTORIAL)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.benchmark_home_button)) },
+                        leadingIcon = { Icon(Icons.Filled.Speed, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            nav.navigate(Routes.BENCHMARK)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Re-read legal notice") },
+                        leadingIcon = { Icon(Icons.Filled.Gavel, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            nav.navigate(Routes.LEGAL)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.crash_export_log)) },
+                        leadingIcon = { Icon(Icons.Filled.BugReport, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            val intent = CrashReporter.buildShareIntent(ctx)
+                            if (intent == null) {
+                                Toast.makeText(ctx, R.string.crash_export_none, Toast.LENGTH_SHORT).show()
+                            } else {
+                                ctx.startActivity(
+                                    Intent.createChooser(intent, "Export diagnostic log")
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                )
+                            }
+                        },
+                    )
+                }
+            }
         }
 
         // Hero session card with CTA
@@ -383,11 +453,32 @@ fun HomeScreen(nav: NavHostController) {
             }
             if (lastError != null) {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = lastError!!,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = lastError!!,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                clipboard.setText(AnnotatedString(lastError!!))
+                                Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ContentCopy,
+                            contentDescription = "Copy error",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
             }
 
         }
@@ -571,51 +662,6 @@ fun HomeScreen(nav: NavHostController) {
             statusLabel = if (autoCount > 0) "On" else "Off",
             onClick = { nav.navigate(Routes.AUTOMATIC_OVERLAY) },
         )
-
-        // Footer actions
-        LsfgCard {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "MORE",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = LsfgPrimary,
-                )
-                LsfgSecondaryButton(
-                    text = stringResource(R.string.nav_tutorial),
-                    onClick = { nav.navigate(Routes.TUTORIAL) },
-                    leadingIcon = Icons.Filled.School,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                LsfgSecondaryButton(
-                    text = stringResource(R.string.benchmark_home_button),
-                    onClick = { nav.navigate(Routes.BENCHMARK) },
-                    leadingIcon = Icons.Filled.Speed,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                LsfgSecondaryButton(
-                    text = "Re-read legal notice",
-                    onClick = { nav.navigate(Routes.LEGAL) },
-                    leadingIcon = Icons.Filled.Gavel,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                LsfgSecondaryButton(
-                    text = stringResource(R.string.crash_export_log),
-                    onClick = {
-                        val intent = CrashReporter.buildShareIntent(ctx)
-                        if (intent == null) {
-                            Toast.makeText(ctx, R.string.crash_export_none, Toast.LENGTH_SHORT).show()
-                        } else {
-                            ctx.startActivity(
-                                Intent.createChooser(intent, "Export diagnostic log")
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                            )
-                        }
-                    },
-                    leadingIcon = Icons.Filled.BugReport,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
 
         Spacer(Modifier.height(8.dp))
         Text(

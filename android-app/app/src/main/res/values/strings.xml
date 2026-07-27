@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">LSFG Android</string>
-    <string name="accessibility_service_label">LSFG Touch Passthrough</string>
-    <string name="accessibility_service_description">Forwards touch events from the LSFG overlay to the underlying app so you can interact with games while the frame-generation overlay is visible.</string>
+    <string name="app_name">DeepFG</string>
+    <string name="accessibility_service_label">DeepFG Touch Passthrough</string>
+    <string name="accessibility_service_description">Forwards touch events from the DeepFG overlay to the underlying app so you can interact with games while the frame-generation overlay is visible.</string>
 
-    <string name="notif_channel_session">LSFG Session</string>
-    <string name="notif_session_title">LSFG session active</string>
+    <string name="notif_channel_session">DeepFG Session</string>
+    <string name="notif_session_title">DeepFG session active</string>
     <string name="notif_session_text">Frame generation overlay is running. Tap to stop.</string>
 
     <string name="legal_title">Legal notice</string>
@@ -36,11 +36,11 @@
     <string name="nav_app">Target app</string>
     <string name="nav_start">Start session</string>
     <string name="nav_tutorial">Tutorial</string>
-    <string name="tutorial_subtitle">How to use LSFG-Android</string>
+    <string name="tutorial_subtitle">How to use DeepFG</string>
     <string name="tutorial_intro">Follow these steps to get the most out of frame generation. Tap any screenshot to view it full size.</string>
     <string name="tutorial_empty">Tutorial content will be added soon. Drop your screenshots in res/drawable-nodpi and reference them in TutorialScreen.kt.</string>
     <string name="tutorial_prompt_title">View the tutorial?</string>
-    <string name="tutorial_prompt_body">Welcome to LSFG-Android! It is strongly recommended to read the tutorial before using the app — it walks you through accessibility permissions, loading Lossless.dll, picking a target app and the overlay menu.\n\nYou can always reopen the tutorial later from the Tutorial entry on the home screen.</string>
+    <string name="tutorial_prompt_body">Welcome to DeepFG! It is strongly recommended to read the tutorial before using the app — it walks you through accessibility permissions, loading Lossless.dll, picking a target app and the overlay menu.\n\nYou can always reopen the tutorial later from the Tutorial entry on the home screen.</string>
     <string name="tutorial_prompt_view">View tutorial</string>
     <string name="tutorial_prompt_skip">Skip for now</string>
 
@@ -68,7 +68,7 @@
     <string name="section_hud">HUD</string>
     <string name="section_trusted_overlay">Touch pass-through</string>
     <string name="param_trusted_overlay">Trusted overlay (Accessibility)</string>
-    <string name="param_trusted_overlay_desc">Hosts the overlay as a trusted accessibility surface so taps reach the app underneath on strict devices (e.g. Orange Pi 5 Ultra) where they would otherwise be blocked. Trade-off: while a session is running the overlay covers the status bar and navigation bar — you cannot pull down notifications or tap home/back. Leave OFF if your device passes taps already; turn ON only when you cannot tap through. Requires the LSFG accessibility service to be enabled.</string>
+    <string name="param_trusted_overlay_desc">Hosts the overlay as a trusted accessibility surface so taps reach the app underneath on strict devices (e.g. Orange Pi 5 Ultra) where they would otherwise be blocked. Trade-off: while a session is running the overlay covers the status bar and navigation bar — you cannot pull down notifications or tap home/back. Leave OFF if your device passes taps already; turn ON only when you cannot tap through. Requires the DeepFG accessibility service to be enabled.</string>
     <string name="param_gesture_forwarding">Gesture forwarding fallback</string>
     <string name="param_gesture_forwarding_desc">Extra fallback for the rare device where taps still don\'t reach the game even with trusted overlay on. The accessibility service replays the touch directly instead of relying on pass-through. Only take this if trusted overlay alone didn\'t fix tapping — enabling it when pass-through already works can cause duplicate taps.</string>
     <string name="section_capture_mode">Capture mode</string>
@@ -88,6 +88,8 @@
     <string name="param_multiplier_desc">Number of frames produced per real frame. 2 = one interpolated frame between each pair. 3–4 recommended on mobile.</string>
     <string name="param_flow_scale">Flow scale</string>
     <string name="param_flow_scale_desc">Internal motion estimation resolution. Lower = faster but less accurate.</string>
+    <string name="param_render_resolution_scale">Render resolution</string>
+    <string name="param_render_resolution_scale_desc">Percentage of the display\'s native resolution to capture and render at. Lower values cut GPU cost across capture, frame-gen and every post-processing pass, at the cost of a softer image. Takes effect on the next capture (re)start.</string>
     <string name="param_performance_mode">Performance mode (LSFG 3.1P)</string>
     <string name="param_performance_mode_desc">Use the faster, lower-quality shader variant. Recommended on mid-range GPUs.</string>
     <string name="param_hdr">HDR mode</string>
@@ -172,8 +174,8 @@
 
     <string name="nav_automatic_overlay">Automatic Overlay</string>
     <string name="automatic_overlay_title">Automatic Overlay</string>
-    <string name="automatic_overlay_hint">Pick the apps that should automatically show the LSFG launcher when opened from the home screen. A small floating icon appears on top of the game; tap it to start the frame-generation overlay.</string>
-    <string name="automatic_overlay_a11y_required">Enable the LSFG accessibility service so the app can detect when one of the selected games is opened.</string>
+    <string name="automatic_overlay_hint">Pick the apps that should automatically show the DeepFG launcher when opened from the home screen. A small floating icon appears on top of the game; tap it to start the frame-generation overlay.</string>
+    <string name="automatic_overlay_a11y_required">Enable the DeepFG accessibility service so the app can detect when one of the selected games is opened.</string>
     <string name="automatic_overlay_a11y_action">Open accessibility settings</string>
     <string name="automatic_overlay_count_zero">None — tap to add</string>
     <string name="automatic_overlay_count_n">%1$d apps configured</string>
@@ -181,21 +183,21 @@
     <string name="auto_overlay_sheet_activate">Activate frame-generation overlay</string>
     <string name="auto_overlay_sheet_disable">Disable Automatic Overlay for this app</string>
     <string name="auto_overlay_sheet_close">Close</string>
-    <string name="auto_overlay_sheet_intro">Tap to start the LSFG capture session for this app. Android will ask you to confirm screen recording.</string>
+    <string name="auto_overlay_sheet_intro">Tap to start the DeepFG capture session for this app. Android will ask you to confirm screen recording.</string>
 
-    <string name="start_button">Start LSFG session</string>
+    <string name="start_button">Start DeepFG session</string>
     <string name="stop_button">Stop session</string>
 
     <string name="perm_overlay_missing">The overlay permission is required. Please grant "Display over other apps".</string>
-    <string name="perm_accessibility_missing">The LSFG accessibility service must be enabled so touches pass through the overlay.</string>
-    <string name="perm_capture_denied">Screen capture was denied. LSFG cannot run without it.</string>
+    <string name="perm_accessibility_missing">The DeepFG accessibility service must be enabled so touches pass through the overlay.</string>
+    <string name="perm_capture_denied">Screen capture was denied. DeepFG cannot run without it.</string>
 
     <string name="limitation_title">About this preview</string>
-    <string name="limitation_body">On non-rooted Android, LSFG cannot be injected into another app\'s Vulkan context like on Linux. MediaProjection provides the standard capture path; Shizuku capture can use a privileged UID-filtered target path on supported builds and requires Shizuku with ADB or wireless debugging active. See the README for details.</string>
+    <string name="limitation_body">On non-rooted Android, DeepFG cannot be injected into another app\'s Vulkan context like on Linux. MediaProjection provides the standard capture path; Shizuku capture can use a privileged UID-filtered target path on supported builds and requires Shizuku with ADB or wireless debugging active. See the README for details.</string>
 
-    <string name="a11y_info">Optional. LSFG renders at full opacity and forwards touches to the game without this service. Enable it only if you notice rendering issues on a specific device.</string>
+    <string name="a11y_info">Optional. DeepFG renders at full opacity and forwards touches to the game without this service. Enable it only if you notice rendering issues on a specific device.</string>
 
-    <string name="crash_dialog_title">LSFG crashed on last run</string>
+    <string name="crash_dialog_title">DeepFG crashed on last run</string>
     <string name="crash_dialog_body">A report was saved. You can share it with the developer to help debug the issue. Device and extension info is already included — no personal data is attached.</string>
     <string name="crash_dialog_share">Share report</string>
     <string name="crash_dialog_dismiss">Dismiss</string>
