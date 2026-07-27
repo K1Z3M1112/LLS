@@ -132,6 +132,20 @@ composeCompiler {
     reportsDestination = layout.buildDirectory.dir("compose_compiler")
 }
 
+// The Kotlin compile daemon and the CMake/ninja native build were being
+// scheduled concurrently by Gradle's worker pool. On constrained CI runners
+// this races the Kotlin daemon against 2 parallel clang/ninja invocations
+// (arm64-v8a + x86_64) for CPU, and the Kotlin daemon's RPC call back to
+// Gradle intermittently fails with no diagnostic output ("Compilation
+// error. See log for more details" but no actual `error:` line). Forcing
+// native builds to run after Kotlin compilation removes the race.
+afterEvaluate {
+    tasks.matching { it.name.startsWith("buildCMake") || it.name.startsWith("configureCMake") }
+        .configureEach {
+            mustRunAfter(tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") })
+        }
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
     implementation(composeBom)
