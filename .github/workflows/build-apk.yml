@@ -62,10 +62,10 @@ jobs:
           if ./gradlew :app:assembleDebug --stacktrace --no-daemon; then
             exit 0
           fi
-          echo "First attempt failed, retrying with --info for full diagnostics..."
+          echo "First attempt failed, retrying with --refresh-dependencies and --info..."
           ./gradlew --stop || true
           sleep 5
-          ./gradlew :app:assembleDebug --stacktrace --no-daemon --info
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon --refresh-dependencies --info
 
       - name: Build release APK
         working-directory: android-app
@@ -73,10 +73,10 @@ jobs:
           if ./gradlew :app:assembleRelease --stacktrace --no-daemon; then
             exit 0
           fi
-          echo "First attempt failed, retrying with --info for full diagnostics..."
+          echo "First attempt failed, retrying with --refresh-dependencies and --info..."
           ./gradlew --stop || true
           sleep 5
-          ./gradlew :app:assembleRelease --stacktrace --no-daemon --info
+          ./gradlew :app:assembleRelease --stacktrace --no-daemon --refresh-dependencies --info
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
