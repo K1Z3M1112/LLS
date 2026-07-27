@@ -24,6 +24,16 @@ data class LsfgConfig(
     val framegenFp16: Boolean,
     val targetPackage: String?,
     val captureSource: CaptureSource,
+    /**
+     * Fraction of the display's native resolution to capture and render at,
+     * from 1.0 (100%, native) down to 0.0 (0%, capture disabled — floor-clamped
+     * to [MIN_RENDER_RESOLUTION_SCALE] everywhere it drives an actual buffer
+     * size so we never allocate a 0x0 surface). Lower values shrink the
+     * VirtualDisplay/ImageReader capture size and the native context's
+     * width/height, cutting GPU cost across capture, frame-gen and every
+     * post-processing pass — at the cost of a softer final image.
+     */
+    val renderResolutionScale: Float,
     val legalAccepted: Boolean,
     val fpsCounterEnabled: Boolean,
     val frameGraphEnabled: Boolean,
@@ -244,6 +254,7 @@ class LsfgPreferences(ctx: Context) {
         framegenFp16 = prefs.getBoolean(KEY_FRAMEGEN_FP16, false),
         targetPackage = prefs.getString(KEY_TARGET, null),
         captureSource = CaptureSource.fromPref(prefs.getString(KEY_CAPTURE_SOURCE, null)),
+        renderResolutionScale = prefs.getFloat(KEY_RENDER_RESOLUTION_SCALE, 1.0f).coerceIn(0.0f, 1.0f),
         legalAccepted = prefs.getBoolean(KEY_LEGAL, false),
         fpsCounterEnabled = prefs.getBoolean(KEY_FPS_COUNTER, false),
         frameGraphEnabled = prefs.getBoolean(KEY_FRAME_GRAPH, false),
@@ -310,6 +321,9 @@ class LsfgPreferences(ctx: Context) {
     fun setTargetPackage(pkg: String?) = prefs.edit().putString(KEY_TARGET, pkg).apply()
     fun setCaptureSource(value: CaptureSource) = prefs.edit()
         .putString(KEY_CAPTURE_SOURCE, value.prefValue)
+        .apply()
+    fun setRenderResolutionScale(value: Float) = prefs.edit()
+        .putFloat(KEY_RENDER_RESOLUTION_SCALE, value.coerceIn(0.0f, 1.0f))
         .apply()
     fun setLegalAccepted(value: Boolean) = prefs.edit().putBoolean(KEY_LEGAL, value).apply()
     fun isTutorialPromptShown(): Boolean = prefs.getBoolean(KEY_TUTORIAL_PROMPT_SHOWN, false)
@@ -389,6 +403,15 @@ class LsfgPreferences(ctx: Context) {
         private const val KEY_FRAMEGEN_FP16 = "framegen_fp16"
         private const val KEY_TARGET = "target_pkg"
         private const val KEY_CAPTURE_SOURCE = "capture_source"
+        private const val KEY_RENDER_RESOLUTION_SCALE = "render_resolution_scale"
+        /**
+         * Never let the *effective* capture/render size collapse to 0 pixels even
+         * if the user drags the slider all the way to 0%. Applied only where the
+         * scale multiplies an actual buffer dimension (VirtualDisplay/ImageReader
+         * size, native context width/height) — the stored preference and the UI
+         * slider itself still range down to a true 0.0.
+         */
+        const val MIN_RENDER_RESOLUTION_SCALE = 0.1f
         private const val KEY_LEGAL = "legal_accepted"
         private const val KEY_TUTORIAL_PROMPT_SHOWN = "tutorial_prompt_shown"
         private const val KEY_FPS_COUNTER = "fps_counter"
