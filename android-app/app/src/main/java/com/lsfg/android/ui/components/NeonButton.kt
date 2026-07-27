@@ -6,7 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.ripple.rememberRipple
+import androidx.compose.material.ripple.ripple
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -46,7 +46,7 @@ fun NeonButton(
             .border(1.dp, borderColor, shape)
             .clickable(
                 interactionSource = interactionSource,
-                indication = rememberRipple(color = Color.White),
+                indication = ripple(color = Color.White),
                 enabled = enabled,
                 onClick = onClick,
             )
@@ -87,7 +87,7 @@ fun OutlineButton(
             .border(1.dp, accentColor.copy(alpha = 0.50f), shape)
             .clickable(
                 interactionSource = interactionSource,
-                indication = rememberRipple(color = accentColor),
+                indication = ripple(color = accentColor),
                 onClick = onClick,
             )
             .padding(horizontal = 16.dp),
@@ -131,7 +131,7 @@ fun MultiplierChip(
             .border(1.dp, borderColor, shape)
             .clickable(
                 interactionSource = interactionSource,
-                indication = rememberRipple(color = RedCore),
+                indication = ripple(color = RedCore),
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
