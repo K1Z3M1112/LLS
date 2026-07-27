@@ -1,3 +1,0 @@
-[submodule "test/assets/corkami-poc-dataset"]
-	path = tests/assets/corkami-poc-dataset
-	url = https://github.com/corkami/pocs

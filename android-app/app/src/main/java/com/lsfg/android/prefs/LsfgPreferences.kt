@@ -276,7 +276,7 @@ class LsfgPreferences(ctx: Context) {
         gpuPostProcessingEnabled = prefs.getBoolean(KEY_GPU_POST, false),
         gpuPostProcessingStage = GpuPostProcessingStage.fromPref(prefs.getString(KEY_GPU_STAGE, null)),
         gpuPostProcessingMethod = GpuPostProcessingMethod.fromPref(prefs.getString(KEY_GPU_METHOD, null)),
-        gpuUpscaleFactor = prefs.getFloat(KEY_GPU_UPSCALE, 1.0f).coerceIn(1.0f, 2.0f),
+        gpuUpscaleFactor = prefs.getFloat(KEY_GPU_UPSCALE, 1.0f).coerceIn(1.0f, 4.0f),
         gpuSharpness = prefs.getFloat(KEY_GPU_SHARPNESS, 0.5f).coerceIn(0f, 1f),
         gpuStrength = prefs.getFloat(KEY_GPU_STRENGTH, 0.5f).coerceIn(0f, 1f),
         pacingPreset = PacingPreset.fromPref(prefs.getString(KEY_PACING_PRESET, null)),
@@ -362,7 +362,7 @@ class LsfgPreferences(ctx: Context) {
         .putString(KEY_GPU_METHOD, value.prefValue)
         .apply()
     fun setGpuUpscaleFactor(value: Float) = prefs.edit()
-        .putFloat(KEY_GPU_UPSCALE, value.coerceIn(1.0f, 2.0f))
+        .putFloat(KEY_GPU_UPSCALE, value.coerceIn(1.0f, 4.0f))
         .apply()
     fun setGpuSharpness(value: Float) = prefs.edit()
         .putFloat(KEY_GPU_SHARPNESS, value.coerceIn(0f, 1f))

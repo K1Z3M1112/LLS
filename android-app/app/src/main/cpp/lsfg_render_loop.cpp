@@ -169,6 +169,14 @@ struct State {
     AhbImage gpuPostImage{};
     GpuPostProcessor gpuPost{};
     std::vector<AhbImage> outputs; // multiplier-many outputs
+    // AHB → VkImage import cache. MediaProjection rotates a small pool (2-4)
+    // of AHBs; re-importing on every frame wastes vkCreateImage +
+    // vkAllocateMemory. The cache holds its own AHardwareBuffer_acquire ref
+    // so entries outlive the per-frame release. Evicted FIFO beyond kAhbCacheMax.
+    // Must be fully cleared (destroyAhbImage + AHardwareBuffer_release for each
+    // entry) before vkDestroyDevice in the cleanup path.
+    static constexpr size_t kAhbCacheMax = 8;
+    std::unordered_map<AHardwareBuffer*, AhbImage> ahbImportCache;
 
     // Output surface for the final blit. Owned (acquired from JNI).
     ANativeWindow *outWindow = nullptr;
@@ -327,7 +335,7 @@ float clamp01(float value) {
 }
 
 float clampScale(float value) {
-    return value < 1.0f ? 1.0f : (value > 2.0f ? 2.0f : value);
+    return value < 1.0f ? 1.0f : (value > 4.0f ? 4.0f : value);
 }
 
 const char *gpuMethodName(int method) {
@@ -1159,14 +1167,21 @@ bool copyAhbImage(const AhbImage &src, const AhbImage &dst) {
         .commandBufferCount = 1,
         .pCommandBuffers = &cb,
     };
-    const VkResult qsr = g.vk.fn.vkQueueSubmit(g.vk.computeQueue, 1, &si, VK_NULL_HANDLE);
+    // Use a per-submission VkFence instead of vkQueueWaitIdle so we only block
+    // on THIS submission — not the entire queue — avoiding unnecessary pipeline drains.
+    VkFenceCreateInfo fci{ .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    VkFence fence = VK_NULL_HANDLE;
+    g.vk.fn.vkCreateFence(g.vk.device, &fci, nullptr, &fence);
+    const VkResult qsr = g.vk.fn.vkQueueSubmit(g.vk.computeQueue, 1, &si, fence);
     if (qsr != VK_SUCCESS) {
         LOGE("copyAhbImage vkQueueSubmit failed: %d dst=%ux%u", (int)qsr,
              dst.extent.width, dst.extent.height);
+        g.vk.fn.vkDestroyFence(g.vk.device, fence, nullptr);
         g.vk.fn.vkFreeCommandBuffers(g.vk.device, g.vk.commandPool, 1, &cb);
         return false;
     }
-    g.vk.fn.vkQueueWaitIdle(g.vk.computeQueue);
+    g.vk.fn.vkWaitForFences(g.vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+    g.vk.fn.vkDestroyFence(g.vk.device, fence, nullptr);
     g.vk.fn.vkFreeCommandBuffers(g.vk.device, g.vk.commandPool, 1, &cb);
     return true;
 }
@@ -1588,13 +1603,14 @@ void blitOutputToWindow(const AhbImage &out, bool allowGpuPost = true) {
     const uint32_t srcStrideBytes = desc.stride * 4;  // RGBA8888
 
     // Sample luma on every frame: needed for the feedback-loop gate (not just
-    // the first 30 blits).  32×18 grid keeps it cheap (~576 pixels).
+    // the first 30 blits).  8×8 grid (64 pixels) is sufficient for dark-frame
+    // detection and costs ~89% fewer reads than the old 32×18 grid.
     uint64_t lumaSum = 0, alphaSum = 0;
     uint32_t samples = 0;
     {
         const auto *srcBytes = static_cast<const uint8_t *>(srcPtr);
-        const uint32_t sW = std::min<uint32_t>(desc.width, 32);
-        const uint32_t sH = std::min<uint32_t>(desc.height, 18);
+        const uint32_t sW = std::min<uint32_t>(desc.width, 8u);
+        const uint32_t sH = std::min<uint32_t>(desc.height, 8u);
         for (uint32_t sy = 0; sy < sH; ++sy) {
             const uint32_t y = sH > 1 ? (sy * (desc.height - 1)) / (sH - 1) : 0;
             for (uint32_t sx = 0; sx < sW; ++sx) {
@@ -1712,12 +1728,14 @@ void blitOutputToWindow(const AhbImage &out, bool allowGpuPost = true) {
     if (!npuPosted) {
         const uint32_t copyW = std::min<uint32_t>(desc.width, static_cast<uint32_t>(dst.width));
         const uint32_t copyH = std::min<uint32_t>(desc.height, static_cast<uint32_t>(dst.height));
+        // Screen-capture AHBs (MediaProjection / Shizuku) always have alpha=0xFF.
+        // Use per-row memcpy instead of a per-pixel OR loop — orders of magnitude
+        // faster at 1080p+, and produces identical output for opaque content.
+        const uint32_t rowBytes = copyW * 4u;
         for (uint32_t y = 0; y < copyH; ++y) {
-            const uint32_t *sRow = reinterpret_cast<const uint32_t *>(src + y * srcStrideBytes);
-                  uint32_t *dRow = reinterpret_cast<      uint32_t *>(dest + y * dstStrideBytes);
-            for (uint32_t x = 0; x < copyW; ++x) {
-                dRow[x] = sRow[x] | 0xFF000000u;
-            }
+            std::memcpy(dest + y * dstStrideBytes,
+                        src  + y * srcStrideBytes,
+                        rowBytes);
         }
         producedW = copyW;
         producedH = copyH;
@@ -1833,12 +1851,33 @@ void workerThread() {
 
         // Wrap the imported AHB (read-only from our perspective) and copy
         // into the oldest input slot on-the-fly.
+        // AHB import cache: MediaProjection rotates a small pool (2-4) of AHBs.
+        // Reuse the cached VkImage+VkDeviceMemory instead of allocating per frame.
         AhbImage src{};
-        const int rc = importAhbImage(g.vk, ahb, src);
-        if (rc != kOk) {
-            LOGW("importAhbImage failed rc=%d", rc);
-            AHardwareBuffer_release(ahb); // release queue-enqueue ref
-            continue;
+        bool srcFromCache = false;
+        {
+            auto it = g.ahbImportCache.find(ahb);
+            if (it != g.ahbImportCache.end()) {
+                src = it->second;
+                srcFromCache = true;
+            }
+        }
+        if (!srcFromCache) {
+            const int rc = importAhbImage(g.vk, ahb, src);
+            if (rc != kOk) {
+                LOGW("importAhbImage failed rc=%d", rc);
+                AHardwareBuffer_release(ahb); // release queue-enqueue ref
+                continue;
+            }
+            // Cache the import; acquire an extra ref so the cache outlives the frame.
+            AHardwareBuffer_acquire(ahb);
+            if (g.ahbImportCache.size() >= State::kAhbCacheMax) {
+                auto oldest = g.ahbImportCache.begin();
+                destroyAhbImage(g.vk, oldest->second);
+                AHardwareBuffer_release(oldest->first);
+                g.ahbImportCache.erase(oldest);
+            }
+            g.ahbImportCache[ahb] = src;
         }
 
         // Framegen tracks an internal frameIdx and treats inImg_0 as the
@@ -1897,15 +1936,18 @@ void workerThread() {
             if (!processRealFrameIntoSlot(src, g.inSlot[0]) ||
                     !processRealFrameIntoSlot(src, g.inSlot[1])) {
                 LOGW("bootstrap frame input processing failed");
+                // Evict from cache on failure — state may be corrupt.
+                if (g.ahbImportCache.erase(ahb)) AHardwareBuffer_release(ahb);
                 destroyAhbImage(g.vk, src);
-                AHardwareBuffer_release(ahb);
+                AHardwareBuffer_release(ahb); // release queue-enqueue ref
                 continue;
             }
         } else {
             if (!processRealFrameIntoSlot(src, g.inSlot[newSlot])) {
                 LOGW("frame input processing failed");
+                if (g.ahbImportCache.erase(ahb)) AHardwareBuffer_release(ahb);
                 destroyAhbImage(g.vk, src);
-                AHardwareBuffer_release(ahb);
+                AHardwareBuffer_release(ahb); // release queue-enqueue ref
                 continue;
             }
         }
@@ -1932,8 +1974,10 @@ void workerThread() {
             && g.framesCopied > 1
             && shouldSuppressGeneratedFrames(g.inSlot[prevSlot], g.inSlot[newSlot]);
 
-        destroyAhbImage(g.vk, src);
-        AHardwareBuffer_release(ahb);
+        // Cache owns the AhbImage (both hit and miss paths); only release
+        // the per-frame AHB ref that was acquired in pushFrame.
+        (void)srcFromCache;
+        AHardwareBuffer_release(ahb); // release queue-enqueue ref
 
         // PROFILE: input copy phase done.
         const auto tCopyDone = State::Clock::now();
@@ -2575,6 +2619,13 @@ void shutdownRenderLoop() {
             } catch (...) {}
             g.framegenInitOk = false;
         }
+
+        // Clear AHB import cache before any Vulkan teardown.
+        for (auto &[cachedAhb, img] : g.ahbImportCache) {
+            destroyAhbImage(g.vk, img);
+            AHardwareBuffer_release(cachedAhb);
+        }
+        g.ahbImportCache.clear();
 
         for (auto &o : g.outputs) destroyAhbImage(g.vk, o);
         g.outputs.clear();

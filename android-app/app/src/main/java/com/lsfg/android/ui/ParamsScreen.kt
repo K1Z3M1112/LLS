@@ -307,8 +307,8 @@ fun ParamsImageQualityScreen(nav: NavHostController) {
                 valueDisplay = "%.2fx".format(state.gpuUpscaleFactor),
                 description = stringResource(R.string.param_gpu_upscale_desc),
                 value = state.gpuUpscaleFactor,
-                range = 1.0f..2.0f,
-                steps = 3,
+                range = 1.0f..4.0f,
+                steps = 5,
                 leadingIcon = Icons.Filled.OpenInFull,
                 onValueChange = {
                     prefs.setGpuUpscaleFactor(it)
