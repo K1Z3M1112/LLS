@@ -59,28 +59,24 @@ jobs:
       - name: Build debug APK
         working-directory: android-app
         run: |
-          for attempt in 1 2; do
-            if ./gradlew :app:assembleDebug --stacktrace --no-daemon; then
-              exit 0
-            fi
-            echo "Build attempt $attempt failed, retrying..."
-            ./gradlew --stop || true
-            sleep 5
-          done
-          exit 1
+          if ./gradlew :app:assembleDebug --stacktrace --no-daemon; then
+            exit 0
+          fi
+          echo "First attempt failed, retrying with --info for full diagnostics..."
+          ./gradlew --stop || true
+          sleep 5
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon --info
 
       - name: Build release APK
         working-directory: android-app
         run: |
-          for attempt in 1 2; do
-            if ./gradlew :app:assembleRelease --stacktrace --no-daemon; then
-              exit 0
-            fi
-            echo "Build attempt $attempt failed, retrying..."
-            ./gradlew --stop || true
-            sleep 5
-          done
-          exit 1
+          if ./gradlew :app:assembleRelease --stacktrace --no-daemon; then
+            exit 0
+          fi
+          echo "First attempt failed, retrying with --info for full diagnostics..."
+          ./gradlew --stop || true
+          sleep 5
+          ./gradlew :app:assembleRelease --stacktrace --no-daemon --info
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
