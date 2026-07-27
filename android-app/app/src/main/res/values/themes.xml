@@ -1,10 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.LsfgAndroid" parent="android:Theme.Material.NoActionBar">
+    <!--
+        Compose manages its own theming via LsfgTheme / darkColorScheme.
+        This XML theme is used only by the Android window / activity chrome
+        (status bar, nav bar, splash).
+    -->
+    <style name="Theme.LsfgAndroid" parent="android:Theme.Material.NoTitleBar.Fullscreen">
+        <!-- Window chrome -->
+        <item name="android:windowBackground">@color/space_black</item>
+        <item name="android:navigationBarColor">@color/nav_bar_color</item>
+        <item name="android:statusBarColor">@color/status_bar_color</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowBackground">@color/lsfg_background</item>
-        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <!-- No action bar; Compose handles the entire UI. -->
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <!-- Edge-to-edge -->
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 </resources>

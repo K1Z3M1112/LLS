@@ -1,66 +1,54 @@
 package com.lsfg.android.ui.theme
 
-import android.app.Activity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
 
-private val LsfgDarkColorScheme = darkColorScheme(
-    primary = LsfgPrimary,
-    onPrimary = LsfgOnPrimary,
-    primaryContainer = LsfgPrimaryContainer,
-    onPrimaryContainer = LsfgOnPrimaryContainer,
-    secondary = LsfgSecondary,
-    onSecondary = LsfgOnSecondary,
-    secondaryContainer = LsfgSecondaryContainer,
-    onSecondaryContainer = LsfgOnSecondaryContainer,
-    tertiary = LsfgTertiary,
-    onTertiary = LsfgOnTertiary,
-    tertiaryContainer = LsfgTertiaryContainer,
-    onTertiaryContainer = LsfgOnTertiaryContainer,
-    error = LsfgError,
-    onError = LsfgOnError,
-    errorContainer = LsfgErrorContainer,
-    onErrorContainer = LsfgOnErrorContainer,
-    background = LsfgBackground,
-    onBackground = LsfgOnBackground,
-    surface = LsfgSurface,
-    onSurface = LsfgOnSurface,
-    onSurfaceVariant = LsfgOnSurfaceVariant,
-    surfaceDim = LsfgSurfaceDim,
-    surfaceBright = LsfgSurfaceBright,
-    surfaceContainerLowest = LsfgSurfaceContainerLowest,
-    surfaceContainerLow = LsfgSurfaceContainerLow,
-    surfaceContainer = LsfgSurfaceContainer,
-    surfaceContainerHigh = LsfgSurfaceContainerHigh,
-    surfaceContainerHighest = LsfgSurfaceContainerHighest,
-    outline = LsfgOutline,
-    outlineVariant = LsfgOutlineVariant,
+private val LsfgColorScheme = darkColorScheme(
+    primary          = RedCore,
+    onPrimary        = TextPrimary,
+    primaryContainer = RedAlpha30,
+    onPrimaryContainer = TextPrimary,
+
+    secondary        = NeonCyan,
+    onSecondary      = SpaceBlack,
+    secondaryContainer = Color(0xFF003344),
+    onSecondaryContainer = NeonCyan,
+
+    tertiary         = NeonOrange,
+    onTertiary       = SpaceBlack,
+    tertiaryContainer = Color(0xFF3D2010),
+    onTertiaryContainer = NeonOrange,
+
+    background       = SpaceBlack,
+    onBackground     = TextPrimary,
+    surface          = SpaceNavy,
+    onSurface        = TextPrimary,
+    surfaceVariant   = SpaceSurface,
+    onSurfaceVariant = TextSecondary,
+
+    outline          = SpaceBorder,
+    outlineVariant   = Color(0xFF0A0A18),
+
+    error            = ErrorRed,
+    onError          = TextPrimary,
+    errorContainer   = Color(0xFF4D0010),
+    onErrorContainer = ErrorRed,
+
+    inverseSurface   = TextPrimary,
+    inverseOnSurface = SpaceBlack,
+    inversePrimary   = RedDeep,
+
+    scrim            = Color(0xCC000000),
+    surfaceTint      = RedAlpha15,
 )
 
 @Composable
 fun LsfgTheme(content: @Composable () -> Unit) {
-    val colorScheme = LsfgDarkColorScheme
-    val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as? Activity)?.window ?: return@SideEffect
-            window.statusBarColor = Color.Transparent.toArgb()
-            window.navigationBarColor = Color.Transparent.toArgb()
-            val controller = WindowCompat.getInsetsController(window, view)
-            controller.isAppearanceLightStatusBars = false
-            controller.isAppearanceLightNavigationBars = false
-        }
-    }
     MaterialTheme(
-        colorScheme = colorScheme,
-        typography = LsfgTypography,
-        shapes = LsfgShapes,
-        content = content,
+        colorScheme = LsfgColorScheme,
+        typography  = LsfgTypography,
+        content     = content,
     )
 }

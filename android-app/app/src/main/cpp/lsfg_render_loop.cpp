@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <string>
 #include <thread>
+#include <array>
 #include <vector>
 #include <unordered_map>
 #include <dlfcn.h>
@@ -48,10 +49,18 @@ static bool ahbGetIdAttempted = false;
 
 uint64_t getAhbId(AHardwareBuffer* ahb) {
     if (!ahbGetIdAttempted) {
-        void* lib = dlopen("libandroid.so", RTLD_NOW);
-        if (lib) pfnGetAhbId = (PFN_AHardwareBuffer_getId)dlsym(lib, "AHardwareBuffer_getId");
+        // FIX: dlclose the handle after retrieving the symbol.
+        // libandroid.so is always resident on Android so the address stays
+        // valid after dlclose; we just decrement the refcount we incremented.
+        void* lib = dlopen("libandroid.so", RTLD_NOW | RTLD_NOLOAD);
+        if (!lib) lib = dlopen("libandroid.so", RTLD_NOW);
+        if (lib) {
+            pfnGetAhbId = (PFN_AHardwareBuffer_getId)dlsym(lib, "AHardwareBuffer_getId");
+            dlclose(lib); // FIX: release our reference; symbol pointer remains valid
+        }
+        // FIX: log success at INFO level, not WARN.
         if (pfnGetAhbId) {
-            LOGW("AHardwareBuffer_getId dynamically loaded successfully from libandroid.so");
+            LOGI("AHardwareBuffer_getId dynamically loaded from libandroid.so");
         } else {
             LOGW("AHardwareBuffer_getId not found in libandroid.so (API < 31). Falling back to pointer hashing.");
         }
@@ -408,25 +417,40 @@ uint32_t captureContentHash(AHardwareBuffer *ahb) {
             -1, nullptr, &ptr) != 0 || ptr == nullptr) {
         return 0;
     }
-    const uint32_t stride = desc.stride * 4u;  // 4 bytes per RGBA8 pixel
-    const auto *bytes = static_cast<const uint8_t *>(ptr);
-    constexpr uint32_t kGrid = 8;  // 8×8 = 64 samples
-    uint32_t hash = 0x811c9dc5u;   // FNV-1a offset basis
-    for (uint32_t gy = 0; gy < kGrid; ++gy) {
-        const uint32_t y = std::min<uint32_t>((gy * desc.height) / kGrid,
-                                              desc.height > 0 ? desc.height - 1 : 0);
-        for (uint32_t gx = 0; gx < kGrid; ++gx) {
-            const uint32_t x = std::min<uint32_t>((gx * desc.width) / kGrid,
-                                                  desc.width > 0 ? desc.width - 1 : 0);
-            const uint8_t *p = bytes + y * stride + x * 4u;
-            // Rec.709 luma, quantized by >>2 to drop the 2 noisiest bits.
-            const uint32_t luma = ((77u * p[0] + 150u * p[1] + 29u * p[2]) >> 10);
-            hash = (hash ^ luma) * 0x01000193u;  // FNV-1a prime
+
+    // Pre-compute the 64 byte-offsets when dimensions or stride change.
+    // Called only from the single ImageReader listener thread — static
+    // locals are safe without a mutex.
+    constexpr uint32_t kGrid  = 8;
+    constexpr uint32_t kTotal = kGrid * kGrid;
+    static uint32_t cachedW = 0, cachedH = 0, cachedStride = 0;
+    static std::array<uint32_t, kTotal> cachedOffsets{};
+    if (desc.width != cachedW || desc.height != cachedH || desc.stride != cachedStride) {
+        const uint32_t byteStride = desc.stride * 4u;
+        for (uint32_t gy = 0; gy < kGrid; ++gy) {
+            const uint32_t y = desc.height > 0
+                ? std::min<uint32_t>((gy * desc.height) / kGrid, desc.height - 1)
+                : 0u;
+            for (uint32_t gx = 0; gx < kGrid; ++gx) {
+                const uint32_t x = desc.width > 0
+                    ? std::min<uint32_t>((gx * desc.width) / kGrid, desc.width - 1)
+                    : 0u;
+                cachedOffsets[gy * kGrid + gx] = y * byteStride + x * 4u;
+            }
         }
+        cachedW = desc.width; cachedH = desc.height; cachedStride = desc.stride;
+    }
+
+    const auto *bytes = static_cast<const uint8_t *>(ptr);
+    uint32_t hash = 0x811c9dc5u;  // FNV-1a offset basis
+    for (uint32_t i = 0; i < kTotal; ++i) {
+        const uint8_t *p = bytes + cachedOffsets[i];
+        // Rec.709 luma, quantized >>2 to drop the 2 noisiest bits.
+        const uint32_t luma = ((77u * p[0] + 150u * p[1] + 29u * p[2]) >> 10);
+        hash = (hash ^ luma) * 0x01000193u;  // FNV-1a prime
     }
     AHardwareBuffer_unlock(ahb, nullptr);
-    // Avoid returning 0 because that's our "unknown" sentinel: two frames
-    // that genuinely hash to 0 would otherwise be miscounted as dupes.
+    // Avoid returning 0 (our "unknown" sentinel) — remap to 1.
     return hash == 0u ? 1u : hash;
 }
 
@@ -448,11 +472,13 @@ bool shouldSuppressGeneratedFrames(const AhbImage &prev, const AhbImage &cur) {
 
     void *prevPtr = nullptr;
     void *curPtr = nullptr;
-    if (AHardwareBuffer_lock(prev.ahb, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY,
+    // CPU_READ_OFTEN matches the AHB allocation flags — avoids unnecessary
+    // GPU→CPU cache flushes that CPU_READ_RARELY would trigger on every call.
+    if (AHardwareBuffer_lock(prev.ahb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
             -1, nullptr, &prevPtr) != 0 || prevPtr == nullptr) {
         return false;
     }
-    if (AHardwareBuffer_lock(cur.ahb, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY,
+    if (AHardwareBuffer_lock(cur.ahb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
             -1, nullptr, &curPtr) != 0 || curPtr == nullptr) {
         AHardwareBuffer_unlock(prev.ahb, nullptr);
         return false;
@@ -460,32 +486,46 @@ bool shouldSuppressGeneratedFrames(const AhbImage &prev, const AhbImage &cur) {
 
     constexpr uint32_t kGridX = 32;
     constexpr uint32_t kGridY = 18;
+    constexpr uint32_t kTotal = kGridX * kGridY;  // 576 samples
     constexpr uint32_t kLumaDeltaThreshold = 26;
-    const uint32_t w = std::min(prevDesc.width, curDesc.width);
+    const uint32_t w = std::min(prevDesc.width,  curDesc.width);
     const uint32_t h = std::min(prevDesc.height, curDesc.height);
+
+    // Pre-compute sample (x, y) coordinates when frame size changes.
+    // Called only from the worker thread — static locals are safe.
+    static uint32_t cachedW = 0, cachedH = 0;
+    static std::array<uint32_t, kTotal> cachedX{};
+    static std::array<uint32_t, kTotal> cachedY{};
+    if (w != cachedW || h != cachedH) {
+        for (uint32_t gy = 0; gy < kGridY; ++gy) {
+            const uint32_t y = std::min((gy * h) / kGridY, h - 1);
+            for (uint32_t gx = 0; gx < kGridX; ++gx) {
+                cachedX[gy * kGridX + gx] = std::min((gx * w) / kGridX, w - 1);
+                cachedY[gy * kGridX + gx] = y;
+            }
+        }
+        cachedW = w; cachedH = h;
+    }
+
     const uint32_t prevStride = prevDesc.stride * 4;
-    const uint32_t curStride = curDesc.stride * 4;
+    const uint32_t curStride  = curDesc.stride  * 4;
     const auto *prevBytes = static_cast<const uint8_t *>(prevPtr);
-    const auto *curBytes = static_cast<const uint8_t *>(curPtr);
+    const auto *curBytes  = static_cast<const uint8_t *>(curPtr);
 
     uint64_t totalDelta = 0;
-    uint32_t samples = 0;
-    for (uint32_t gy = 0; gy < kGridY; ++gy) {
-        const uint32_t y = std::min((gy * h) / kGridY, h - 1);
-        for (uint32_t gx = 0; gx < kGridX; ++gx) {
-            const uint32_t x = std::min((gx * w) / kGridX, w - 1);
-            const uint8_t *a = prevBytes + y * prevStride + x * 4;
-            const uint8_t *b = curBytes + y * curStride + x * 4;
-            const int prevLuma = (77 * a[0] + 150 * a[1] + 29 * a[2]) >> 8;
-            const int curLuma = (77 * b[0] + 150 * b[1] + 29 * b[2]) >> 8;
-            totalDelta += static_cast<uint32_t>(std::abs(curLuma - prevLuma));
-            samples++;
-        }
+    for (uint32_t i = 0; i < kTotal; ++i) {
+        const uint32_t x = cachedX[i];
+        const uint32_t y = cachedY[i];
+        const uint8_t *a = prevBytes + y * prevStride + x * 4;
+        const uint8_t *b = curBytes  + y * curStride  + x * 4;
+        const int prevLuma = (77 * a[0] + 150 * a[1] + 29 * a[2]) >> 8;
+        const int curLuma  = (77 * b[0] + 150 * b[1] + 29 * b[2]) >> 8;
+        totalDelta += static_cast<uint32_t>(std::abs(curLuma - prevLuma));
     }
 
     AHardwareBuffer_unlock(cur.ahb, nullptr);
     AHardwareBuffer_unlock(prev.ahb, nullptr);
-    return samples > 0 && (totalDelta / samples) >= kLumaDeltaThreshold;
+    return (totalDelta / kTotal) >= kLumaDeltaThreshold;
 }
 
 // Sleep until `deadline`, but if we know the display's vsync period, nudge
@@ -1594,8 +1634,11 @@ void blitOutputToWindow(const AhbImage &out, bool allowGpuPost = true) {
     AHardwareBuffer_describe(out.ahb, &desc);
 
     void *srcPtr = nullptr;
+    // CPU_READ_OFTEN matches the AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN flag used
+    // when the output AHBs were allocated — locking with RARELY would force a
+    // full GPU→CPU cache flush on every presented frame, ~10× slower.
     if (AHardwareBuffer_lock(out.ahb,
-            AHARDWAREBUFFER_USAGE_CPU_READ_RARELY,
+            AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
             -1, nullptr, &srcPtr) != 0 || srcPtr == nullptr) {
         LOGW("AHardwareBuffer_lock(read) failed on output");
         return;

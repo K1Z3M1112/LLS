@@ -174,8 +174,9 @@ void append_prop(int fd, const char *label, const char *key) {
 }
 
 // Main handler. Runs on the alternate signal stack.
-struct sigaction g_prev[7] = {};
+// FIX: g_prev size matches g_signals count exactly (6, not 7).
 const int g_signals[] = {SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGTRAP};
+struct sigaction g_prev[sizeof(g_signals) / sizeof(g_signals[0])] = {};
 
 void signal_handler(int sig, siginfo_t *info, void *ucontext) {
     // Open the crash file. O_CREAT|O_TRUNC each time: only the latest crash
@@ -187,8 +188,13 @@ void signal_handler(int sig, siginfo_t *info, void *ucontext) {
     }
     if (fd < 0) {
         // Fall back to logcat only — can't persist but at least we'll see it.
-        // Re-raise to default handler to keep Android's tombstone flow.
-        sigaction(sig, &g_prev[0], nullptr); // imprecise index, acceptable at crash time
+        // FIX: find the correct previous handler for this signal, not always [0].
+        for (size_t i = 0; i < sizeof(g_signals) / sizeof(g_signals[0]); ++i) {
+            if (g_signals[i] == sig) {
+                sigaction(sig, &g_prev[i], nullptr);
+                break;
+            }
+        }
         raise(sig);
         return;
     }

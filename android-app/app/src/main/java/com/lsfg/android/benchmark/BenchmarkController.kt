@@ -10,6 +10,7 @@ import com.lsfg.android.prefs.CpuPostProcessingPreset
 import com.lsfg.android.prefs.VsyncRefreshOverride
 import com.lsfg.android.session.NativeBridge
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
@@ -99,6 +100,10 @@ object BenchmarkController {
      *  mid-run). */
     fun isRunning(): Boolean = state.get() is State.Running
 
+    // FIX: use AtomicBoolean instead of @Volatile Boolean for correct
+    // memory-ordering semantics on all architectures.
+    private val cancelRequested = AtomicBoolean(false)
+
     /**
      * Start the 3-run benchmark. Must be called from a thread other than the
      * Main looper, OR pass [forceWorkerThread]=true to launch a worker. The
@@ -125,13 +130,11 @@ object BenchmarkController {
     /** Cancel an in-flight benchmark. Causes the worker to exit at the next
      *  sample tick and report a failure. Restoring prefs is the worker's job. */
     fun cancel() {
-        cancelRequested = true
+        cancelRequested.set(true)
     }
 
-    @Volatile private var cancelRequested: Boolean = false
-
     private fun runWorker(ctx: Context, hooks: Hooks) {
-        cancelRequested = false
+        cancelRequested.set(false)
         val prefs = LsfgPreferences(ctx)
         val originalConfig = prefs.load()
 
@@ -149,8 +152,6 @@ object BenchmarkController {
         val savedVsyncOverride = originalConfig.vsyncRefreshOverride
 
         // Decide up-front which precision modes are exercisable on this device.
-        // FP16 needs both shaderFloat16 on the GPU and a populated FP16 SPIR-V
-        // cache. The probe is the same one the UI uses to gate its toggle.
         val cacheDir = File(ctx.filesDir, "spirv").absolutePath
         val fp16Supported = runCatching {
             NativeBridge.isFramegenFp16Supported(cacheDir)
@@ -161,8 +162,6 @@ object BenchmarkController {
             "(fp16Supported=$fp16Supported)")
 
         try {
-            // Apply the fixed benchmark preset (everything except multiplier
-            // and the per-pass framegenFp16 flag).
             prefs.setFlowScale(BenchmarkConfig.FLOW_SCALE)
             prefs.setPerformance(BenchmarkConfig.PERFORMANCE_MODE)
             prefs.setAntiArtifacts(false)
@@ -171,11 +170,6 @@ object BenchmarkController {
             prefs.setCpuPostProcessingEnabled(false)
             prefs.setCpuPostProcessingPreset(CpuPostProcessingPreset.OFF)
             prefs.setGpuPostProcessingEnabled(false)
-            // AUTO honours the display's max refresh — refresh rate is selected
-            // at the system level (via the WindowManager.LayoutParams set by
-            // the launching Activity), so we don't change it from here. The
-            // MainActivity already requests a high refresh hint when the
-            // benchmark route is on screen (see BenchmarkScreen).
             prefs.setVsyncRefreshOverride(VsyncRefreshOverride.AUTO)
 
             val totalRuns = precisionModes.size * BenchmarkConfig.MULTIPLIERS.size
@@ -184,12 +178,12 @@ object BenchmarkController {
             var globalIdx = 0
 
             for (precision in precisionModes) {
-                if (cancelRequested) break
+                if (cancelRequested.get()) break
                 prefs.setFramegenFp16(precision.nativeFp16Flag)
                 Log.i(TAG, "switching to precision=${precision.label}")
 
                 for (mult in BenchmarkConfig.MULTIPLIERS) {
-                    if (cancelRequested) {
+                    if (cancelRequested.get()) {
                         val cancelState = State.Failed("Cancelled by user during run ${globalIdx + 1}")
                         state.set(cancelState)
                         postToMain { hooks.onFailed(cancelState) }
@@ -209,7 +203,7 @@ object BenchmarkController {
                         phaseDurationMs = BenchmarkConfig.WARMUP_MS,
                     )
                     sleepInterruptibly(BenchmarkConfig.WARMUP_MS)
-                    if (cancelRequested) break
+                    if (cancelRequested.get()) break
 
                     publishRunning(
                         runIndex = globalIdx,
@@ -227,7 +221,7 @@ object BenchmarkController {
                         durationMs = BenchmarkConfig.RUN_DURATION_SEC * 1000L,
                         sampleIntervalMs = BenchmarkConfig.SAMPLE_INTERVAL_MS,
                         nominalVsyncPeriodNs = hooks.vsyncPeriodNs(),
-                        shouldStop = { cancelRequested },
+                        shouldStop = { cancelRequested.get() },
                     )
                     results.add(result)
                     Log.i(TAG, "run ${globalIdx + 1} complete: precision=${precision.label} " +
@@ -237,7 +231,7 @@ object BenchmarkController {
                 }
             }
 
-            if (cancelRequested) {
+            if (cancelRequested.get()) {
                 val cancelState = State.Failed("Cancelled by user")
                 state.set(cancelState)
                 postToMain { hooks.onFailed(cancelState) }
@@ -265,10 +259,6 @@ object BenchmarkController {
             state.set(completed)
             postToMain { hooks.onCompleted(completed) }
         } finally {
-            // Restore user prefs unconditionally. Reinit is NOT triggered here
-            // because the service is going to stop the session right after the
-            // share intent fires; a reinit now would just wastefully rebuild
-            // the native context for a few ms before tear-down.
             runCatching {
                 prefs.setMultiplier(savedMultiplier)
                 prefs.setFlowScale(savedFlowScale)
@@ -316,7 +306,7 @@ object BenchmarkController {
         val deadline = System.currentTimeMillis() + durationMs
         while (true) {
             val now = System.currentTimeMillis()
-            if (now >= deadline || cancelRequested) return
+            if (now >= deadline || cancelRequested.get()) return
             val remaining = (deadline - now).coerceAtMost(50L)
             try {
                 Thread.sleep(remaining)

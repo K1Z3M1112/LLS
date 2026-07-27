@@ -678,8 +678,13 @@ bool NnapiPostProcessor::configure(uint32_t width, uint32_t height,
         reset();
         return false;
     }
+    // PREFER_LOW_POWER: for small enhancement graphs running 30-90×/s on a
+    // dedicated NPU (Hexagon HTP / MediaTek APU / Samsung Eden), LOW_POWER
+    // typically delivers the same throughput as SUSTAINED_SPEED while consuming
+    // less DSP power — the filters are memory-bandwidth bound, not compute
+    // bound, so the NPU's clock doesn't need to stay at peak.
     ANeuralNetworksCompilation_setPreference(
-        compilation, ANEURALNETWORKS_PREFER_SUSTAINED_SPEED);
+        compilation, ANEURALNETWORKS_PREFER_LOW_POWER);
     const int finishRc = ANeuralNetworksCompilation_finish(compilation);
     if (finishRc != kOk) {
         NPU_LOGE("configure: compilation.finish failed rc=%d", finishRc);

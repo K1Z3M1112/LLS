@@ -7,9 +7,8 @@ import com.lsfg.android.session.LsfgLog
 class LsfgApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        // Install the crash reporter as early as possible so even a crash during
-        // the first JNI load attempt gets captured (NativeBridge static init
-        // already loads the .so; the call below only configures the handler).
+        // Install native crash reporter before any JNI calls so signal handlers
+        // are active from the first dlopen onwards.
         CrashReporter.install(this)
         LsfgLog.init(this)
     }

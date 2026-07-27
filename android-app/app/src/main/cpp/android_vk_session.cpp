@@ -62,12 +62,8 @@ bool has_extension(const std::vector<VkExtensionProperties> &avail, const char *
     return false;
 }
 
-bool has_instance_extension(const std::vector<VkExtensionProperties> &avail, const char *name) {
-    for (const auto &e : avail) {
-        if (std::strcmp(e.extensionName, name) == 0) return true;
-    }
-    return false;
-}
+// FIX: has_instance_extension was identical to has_extension — removed duplicate.
+// All call sites now use has_extension directly.
 
 // Build the instance with the WSI extensions when they're available. Falling
 // back silently is the right move here — the worst case is we miss the
@@ -91,7 +87,7 @@ VkInstance make_instance(bool &hasSurfaceExts) {
     std::vector<const char *> enabled;
     bool surfaceAll = true;
     for (const char *opt : kOptionalInstanceExt) {
-        if (has_instance_extension(avail, opt)) {
+        if (has_extension(avail, opt)) {
             enabled.push_back(opt);
         } else {
             surfaceAll = false;
@@ -516,17 +512,18 @@ bool waitCommandRing(VulkanSession &vk, VkFence fence) {
 
 void destroy_session(VulkanSession &s) {
     if (s.device != VK_NULL_HANDLE) {
-        // Drain any in-flight ring work before freeing fences. Safe even if
-        // no CBs were ever submitted: unarmed fences aren't waited on.
-        if (s.fn.vkWaitForFences != nullptr) {
-            for (uint32_t i = 0; i < kCommandRingSize; ++i) {
-                if (s.ringFences[i] != VK_NULL_HANDLE && s.ringFenceArmed[i]) {
-                    s.fn.vkWaitForFences(s.device, 1, &s.ringFences[i],
-                                         VK_TRUE, 500ULL * 1'000'000ULL);
-                    s.ringFenceArmed[i] = false;
-                }
-            }
+        // FIX: vkDeviceWaitIdle must be called BEFORE destroying the command
+        // pool. Vulkan spec §vkDestroyCommandPool: "All VkCommandBuffer objects
+        // allocated from commandPool must not be in the pending state." Calling
+        // vkDeviceWaitIdle first guarantees no CBs are in-flight, which is a
+        // stronger (and simpler) guarantee than per-fence draining alone.
+        if (s.fn.vkDeviceWaitIdle != nullptr) {
+            s.fn.vkDeviceWaitIdle(s.device);
         }
+        // After device idle, mark all fence slots as not armed so the per-fence
+        // waits below are no-ops (already retired by DeviceWaitIdle above).
+        s.ringFenceArmed.fill(false);
+
         if (s.fn.vkDestroyFence != nullptr) {
             for (uint32_t i = 0; i < kCommandRingSize; ++i) {
                 if (s.ringFences[i] != VK_NULL_HANDLE) {
@@ -540,7 +537,6 @@ void destroy_session(VulkanSession &s) {
             s.fn.vkDestroyCommandPool(s.device, s.commandPool, nullptr);
             s.commandPool = VK_NULL_HANDLE;
         }
-        if (s.fn.vkDeviceWaitIdle != nullptr) s.fn.vkDeviceWaitIdle(s.device);
         if (s.fn.vkDestroyDevice != nullptr) {
             s.fn.vkDestroyDevice(s.device, nullptr);
         } else {

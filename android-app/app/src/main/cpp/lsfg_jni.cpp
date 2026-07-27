@@ -49,16 +49,54 @@ Java_com_lsfg_android_session_NativeBridge_initCrashReporter(
         jstring_to_std(env, logPath));
 }
 
+// FIX: use dllSha256 to invalidate the SPIR-V cache when Lossless.dll is
+// updated. We write a ".sha256" marker into cacheDir after a successful
+// extraction and compare it on every subsequent call. If the hashes differ
+// (new DLL version), we re-extract. This prevents the old shaders from being
+// used with a new DLL, which would cause mismatched pipelines / black frames.
+static bool cache_sha256_matches(const std::string &cacheDir,
+                                 const std::string &sha256) {
+    if (sha256.empty()) return false; // unknown hash → always re-extract
+    const std::string markerPath = cacheDir + "/.dll_sha256";
+    FILE *f = fopen(markerPath.c_str(), "r");
+    if (!f) return false;
+    char stored[128] = {};
+    fgets(stored, sizeof(stored), f);
+    fclose(f);
+    // Strip trailing newline if any.
+    size_t len = strlen(stored);
+    while (len > 0 && (stored[len-1] == '\n' || stored[len-1] == '\r')) stored[--len] = '\0';
+    return std::string(stored) == sha256;
+}
+
+static void cache_write_sha256(const std::string &cacheDir,
+                               const std::string &sha256) {
+    const std::string markerPath = cacheDir + "/.dll_sha256";
+    FILE *f = fopen(markerPath.c_str(), "w");
+    if (!f) return;
+    fputs(sha256.c_str(), f);
+    fclose(f);
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_lsfg_android_session_NativeBridge_extractShaders(
         JNIEnv *env, jobject /*thiz*/,
-        jstring dllPath, jstring /*dllSha256*/, jstring cacheDir) {
-    const std::string path = jstring_to_std(env, dllPath);
+        jstring dllPath, jstring dllSha256, jstring cacheDir) {
+    const std::string path  = jstring_to_std(env, dllPath);
+    const std::string sha   = jstring_to_std(env, dllSha256);
     const std::string cache = jstring_to_std(env, cacheDir);
     if (path.empty() || cache.empty()) {
         return lsfg_android::kErrDllUnreadable;
     }
-    return lsfg_android::extract_dll_to_spirv(path, cache);
+    // FIX: skip extraction when the cached shaders already match this DLL.
+    if (cache_sha256_matches(cache, sha)) {
+        return lsfg_android::kOk;
+    }
+    const int rc = lsfg_android::extract_dll_to_spirv(path, cache);
+    if (rc == lsfg_android::kOk && !sha.empty()) {
+        cache_write_sha256(cache, sha);
+    }
+    return rc;
 }
 
 extern "C" JNIEXPORT jint JNICALL

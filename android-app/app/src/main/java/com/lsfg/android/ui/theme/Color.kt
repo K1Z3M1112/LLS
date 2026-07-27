@@ -2,45 +2,40 @@ package com.lsfg.android.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val LsfgPrimary = Color(0xFF7FE3FF)
-val LsfgOnPrimary = Color(0xFF00344A)
-val LsfgPrimaryContainer = Color(0xFF004D6B)
-val LsfgOnPrimaryContainer = Color(0xFFBFEEFF)
+// ── RedMagic Game Space colour palette ──────────────────────────────────────
+// Background layers (darkest → lightest)
+val SpaceBlack      = Color(0xFF08080F)   // deepest bg
+val SpaceNavy       = Color(0xFF0D0D1A)   // scaffold bg
+val SpaceSurface    = Color(0xFF111122)   // card fill
+val SpaceSurface2   = Color(0xFF161628)   // elevated surface
+val SpaceBorder     = Color(0xFF1E1E34)   // subtle divider
 
-val LsfgSecondary = Color(0xFFB8C7D1)
-val LsfgOnSecondary = Color(0xFF22313B)
-val LsfgSecondaryContainer = Color(0xFF324755)
-val LsfgOnSecondaryContainer = Color(0xFFD8E5EF)
+// Primary brand – RedMagic red
+val RedCore         = Color(0xFFFF1744)   // primary CTA
+val RedGlow         = Color(0xFFFF4069)   // hover / lighter variant
+val RedDeep         = Color(0xFFCC0033)   // pressed / dark variant
+val RedAlpha30      = Color(0x4DFF1744)   // 30% fill for cards
+val RedAlpha15      = Color(0x26FF1744)   // 15% fill for subtle tint
 
-val LsfgTertiary = Color(0xFFFF8FA3)
-val LsfgOnTertiary = Color(0xFF5C1124)
-val LsfgTertiaryContainer = Color(0xFF2A1519)
-val LsfgOnTertiaryContainer = Color(0xFFFFD9DE)
+// Accent colours
+val NeonCyan        = Color(0xFF00E5FF)   // highlight / FPS counter
+val NeonGreen       = Color(0xFF00E676)   // success / active indicator
+val NeonOrange      = Color(0xFFFF6B35)   // warning / secondary accent
+val NeonYellow      = Color(0xFFFFD600)   // caution
 
-val LsfgError = Color(0xFFFFB4AB)
-val LsfgOnError = Color(0xFF690005)
-val LsfgErrorContainer = Color(0xFF93000A)
-val LsfgOnErrorContainer = Color(0xFFFFDAD6)
+// Text
+val TextPrimary     = Color(0xFFFFFFFF)
+val TextSecondary   = Color(0xFFAAAAAC)
+val TextMuted       = Color(0xFF666688)
+val TextDisabled    = Color(0xFF444460)
 
-val LsfgBackground = Color(0xFF0B0F12)
-val LsfgOnBackground = Color(0xFFE2E8EC)
+// System-level
+val ErrorRed        = Color(0xFFFF1744)
+val SuccessGreen    = Color(0xFF00E676)
+val WarningYellow   = Color(0xFFFFB300)
 
-val LsfgSurface = Color(0xFF12181C)
-val LsfgOnSurface = Color(0xFFE2E8EC)
-val LsfgOnSurfaceVariant = Color(0xFFA9B4BD)
-
-val LsfgSurfaceDim = Color(0xFF0B0F12)
-val LsfgSurfaceBright = Color(0xFF2A343B)
-val LsfgSurfaceContainerLowest = Color(0xFF080B0E)
-val LsfgSurfaceContainerLow = Color(0xFF0F1418)
-val LsfgSurfaceContainer = Color(0xFF161D22)
-val LsfgSurfaceContainerHigh = Color(0xFF1C252B)
-val LsfgSurfaceContainerHighest = Color(0xFF232D34)
-
-val LsfgOutline = Color(0xFF3A4750)
-val LsfgOutlineVariant = Color(0xFF232D34)
-
-val LsfgAccentGlow = Color(0xFF4AA8CC)
-val LsfgStatusGood = Color(0xFF7FE3FF)
-val LsfgStatusWarn = Color(0xFFFFB547)
-val LsfgStatusBad = Color(0xFFFF8FA3)
+// Gradient stops used in brushes
+val GradientRedStart   = Color(0xFFFF1744)
+val GradientRedEnd     = Color(0xFFCC0033)
+val GradientCyanStart  = Color(0xFF00E5FF)
+val GradientCyanEnd    = Color(0xFF0091EA)
