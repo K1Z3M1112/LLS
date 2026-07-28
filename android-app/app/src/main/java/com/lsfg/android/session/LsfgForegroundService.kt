@@ -119,6 +119,19 @@ class LsfgForegroundService : Service() {
         propagateDisplayChange()
     }
 
+    // Logged so field logs can confirm/deny the low-memory-killer hypothesis
+    // when a session's log simply stops mid-frame with no shutdown message
+    // (the process was SIGKILLed, not stopped through our own teardown path).
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        LsfgLog.w(TAG, "onTrimMemory level=$level — system is reclaiming memory, session may be killed soon")
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        LsfgLog.w(TAG, "onLowMemory — system-wide low memory, session may be killed soon")
+    }
+
     private fun registerDisplayListener() {
         if (displayListener != null) return
         val dm = getSystemService(DisplayManager::class.java) ?: return

@@ -173,9 +173,14 @@ struct State {
     // of AHBs; re-importing on every frame wastes vkCreateImage +
     // vkAllocateMemory. The cache holds its own AHardwareBuffer_acquire ref
     // so entries outlive the per-frame release. Evicted FIFO beyond kAhbCacheMax.
+    // Capped at 4 (not 8): MediaProjection rotates a pool of 2-4 buffers, so a
+    // cache of 8 pins up to 4 stale/duplicate AHBs' worth of GPU-shared memory
+    // (each ~10 MB at 1080x2408 RGBA8) with zero cache-hit benefit — pure waste
+    // that pushes the process toward the low-memory killer on constrained
+    // devices when a second heavy app (e.g. video playback) shares memory.
     // Must be fully cleared (destroyAhbImage + AHardwareBuffer_release for each
     // entry) before vkDestroyDevice in the cleanup path.
-    static constexpr size_t kAhbCacheMax = 8;
+    static constexpr size_t kAhbCacheMax = 4;
     std::unordered_map<AHardwareBuffer*, AhbImage> ahbImportCache;
 
     // Output surface for the final blit. Owned (acquired from JNI).
