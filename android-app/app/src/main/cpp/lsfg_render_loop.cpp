@@ -2026,8 +2026,30 @@ void workerThread() {
             // previously drained every queue and every context on framegen's
             // device and was the single biggest per-frame cost in profiling
             // (see waitIdleNs below).
-            if (g.performanceMode) LSFG_3_1P::waitIdle();
-            else                   LSFG_3_1::waitIdle();
+            try {
+                if (g.performanceMode) LSFG_3_1P::waitIdle();
+                else                   LSFG_3_1::waitIdle();
+            } catch (const std::exception &e) {
+                // Same failure class as presentContext() above (fence-wait
+                // timeout or VK_ERROR_DEVICE_LOST from Context::waitForCompletion)
+                // — this call was previously unguarded, so on devices where the
+                // heavier FP32/normal-mode workload (roughly 2x the per-frame
+                // image/descriptor count vs performance mode) pushed a weaker
+                // GPU into a fence timeout, the exception escaped this
+                // worker thread uncaught and took down the whole app via
+                // std::terminate(). Degrade the same way presentContext does
+                // instead: log, auto-disable framegen on device loss, and
+                // keep the passthrough stream alive.
+                const char *what = e.what() != nullptr ? e.what() : "(null)";
+                LOGE("waitIdle threw: %s", what);
+                const bool isDeviceLost = std::strstr(what, "error -4") != nullptr ||
+                                          std::strstr(what, "DEVICE_LOST")  != nullptr;
+                if (isDeviceLost && !g.framegenAutoDisabled.load(std::memory_order_relaxed)) {
+                    LOGE("waitIdle: VK_ERROR_DEVICE_LOST — auto-disabling framegen for this session");
+                    g.framegenAutoDisabled.store(true, std::memory_order_relaxed);
+                }
+                continue;
+            }
             // PROFILE: cross-device sync complete; outputs ready to read.
             const auto tWaitIdleDone = State::Clock::now();
 
