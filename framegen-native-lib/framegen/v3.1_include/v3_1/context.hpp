@@ -66,6 +66,26 @@ namespace LSFG_3_1 {
         void present(Vulkan& vk,
             int inSem, const std::vector<int>& outSem);
 
+        ///
+        /// Wait for the GPU work submitted by the most recent present() call
+        /// to complete, without draining the rest of the VkDevice.
+        ///
+        /// This waits only on the completion fences of the ring slot used by
+        /// the last present() — the same fences present() itself already
+        /// waits on 8 frames later to recycle that slot. Callers that need
+        /// to know "is the last present() done" (e.g. to safely read the
+        /// output images from another VkDevice) should use this instead of
+        /// vkDeviceWaitIdle(), which additionally drains unrelated queues
+        /// and other contexts on the same device.
+        ///
+        /// No-op if present() has never been called.
+        ///
+        /// @param vk The Vulkan instance to use.
+        ///
+        /// @throws LSFG::vulkan_error if waiting fails.
+        ///
+        void waitForCompletion(Vulkan& vk) const;
+
         // Trivially copyable, moveable and destructible
         Context(const Context&) = default;
         Context& operator=(const Context&) = default;
