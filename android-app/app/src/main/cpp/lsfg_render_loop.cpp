@@ -1585,10 +1585,12 @@ void blitOutputToWindow(const AhbImage &out, bool allowGpuPost = true) {
 
     // Synchronization is handled by the producer side before calling into this
     // blit path:
-    // - generated outputs: LSFG_3_1::waitIdle() / LSFG_3_1P::waitIdle()
+    // - generated outputs: LSFG_3_1::waitIdle() / LSFG_3_1P::waitIdle(),
+    //   which since the cross-device sync fix wait only on the completion
+    //   fences of the frame just presented (not a full device drain)
     // - raw current frame: copyAhbImage() waits for the transfer queue submit
-    // Doing an extra vkDeviceWaitIdle() here stalls the whole Android-side
-    // Vulkan session on every posted frame and injects visible pacing jitter.
+    // Doing a full vkDeviceWaitIdle() here would stall the whole Android-side
+    // Vulkan session on every posted frame and inject visible pacing jitter.
 
     AHardwareBuffer_Desc desc{};
     AHardwareBuffer_describe(out.ahb, &desc);
@@ -2017,8 +2019,13 @@ void workerThread() {
             // Wait for framegen's GPU work to actually finish before we (a)
             // overwrite the input AHB on the next pushFrame and (b) read the
             // output AHB for the blit. Framegen and our session use different
-            // VkDevices, so vkDeviceWaitIdle on either is necessary — without
-            // an explicit shared semaphore this is the only correct sync.
+            // VkDevices with no shared queue, so a CPU-side wait is still
+            // required — but waitIdle() now waits only on this frame's own
+            // completion fences inside framegen's Context (see
+            // Context::waitForCompletion), not vkDeviceWaitIdle(). That
+            // previously drained every queue and every context on framegen's
+            // device and was the single biggest per-frame cost in profiling
+            // (see waitIdleNs below).
             if (g.performanceMode) LSFG_3_1P::waitIdle();
             else                   LSFG_3_1::waitIdle();
             // PROFILE: cross-device sync complete; outputs ready to read.
