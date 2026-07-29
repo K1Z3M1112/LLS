@@ -260,20 +260,27 @@ class LsfgPreferences(ctx: Context) {
         frameGraphEnabled = prefs.getBoolean(KEY_FRAME_GRAPH, false),
         drawerEdge = DrawerEdge.fromPref(prefs.getString(KEY_DRAWER_EDGE, null)),
         overlayMode = OverlayMode.fromPref(prefs.getString(KEY_OVERLAY_MODE, null)),
-        npuPostProcessingEnabled = prefs.getBoolean(KEY_NPU_POST, false),
+        // Forced off: GPU/Vulkan postprocessing is the only backend now (see
+        // gpuPostProcessingEnabled below) — NNAPI/NPU fallback is disabled at the
+        // source so no caller can accidentally re-enable it via stale prefs.
+        npuPostProcessingEnabled = false,
         npuPostProcessingPreset = NpuPostProcessingPreset.fromPref(prefs.getString(KEY_NPU_PRESET, null)),
         npuUpscaleFactor = prefs.getInt(KEY_NPU_UPSCALE, 1).coerceIn(1, 2),
         npuAmount = prefs.getFloat(KEY_NPU_AMOUNT, 0.5f).coerceIn(0f, 1f),
         npuRadius = prefs.getFloat(KEY_NPU_RADIUS, 1.0f).coerceIn(0.5f, 2.0f),
         npuThreshold = prefs.getFloat(KEY_NPU_THRESHOLD, 0.0f).coerceIn(0f, 1f),
         npuFp16 = prefs.getBoolean(KEY_NPU_FP16, true),
-        cpuPostProcessingEnabled = prefs.getBoolean(KEY_CPU_POST, false),
+        // Forced off — see the NPU note above; CPU postprocessing is disabled too.
+        cpuPostProcessingEnabled = false,
         cpuPostProcessingPreset = CpuPostProcessingPreset.fromPref(prefs.getString(KEY_CPU_PRESET, null)),
         cpuStrength = prefs.getFloat(KEY_CPU_STRENGTH, 0.5f).coerceIn(0f, 1f),
         cpuSaturation = prefs.getFloat(KEY_CPU_SATURATION, 0.5f).coerceIn(0f, 1f),
         cpuVibrance = prefs.getFloat(KEY_CPU_VIBRANCE, 0.0f).coerceIn(0f, 1f),
         cpuVignette = prefs.getFloat(KEY_CPU_VIGNETTE, 0.0f).coerceIn(0f, 1f),
-        gpuPostProcessingEnabled = prefs.getBoolean(KEY_GPU_POST, false),
+        // Forced off — the "Image Quality" feature (GPU/NPU/CPU postprocessing
+        // filters) has been removed from the app entirely (see SHOW_IMAGE_QUALITY
+        // in FeatureFlags.kt). Only core Vulkan frame generation runs now.
+        gpuPostProcessingEnabled = false,
         gpuPostProcessingStage = GpuPostProcessingStage.fromPref(prefs.getString(KEY_GPU_STAGE, null)),
         gpuPostProcessingMethod = GpuPostProcessingMethod.fromPref(prefs.getString(KEY_GPU_METHOD, null)),
         gpuUpscaleFactor = prefs.getFloat(KEY_GPU_UPSCALE, 1.0f).coerceIn(1.0f, 4.0f),
