@@ -39,25 +39,6 @@ data class LsfgConfig(
     val frameGraphEnabled: Boolean,
     val drawerEdge: DrawerEdge,
     val overlayMode: OverlayMode,
-    val npuPostProcessingEnabled: Boolean,
-    val npuPostProcessingPreset: NpuPostProcessingPreset,
-    val npuUpscaleFactor: Int,
-    val npuAmount: Float,
-    val npuRadius: Float,
-    val npuThreshold: Float,
-    val npuFp16: Boolean,
-    val cpuPostProcessingEnabled: Boolean,
-    val cpuPostProcessingPreset: CpuPostProcessingPreset,
-    val cpuStrength: Float,
-    val cpuSaturation: Float,
-    val cpuVibrance: Float,
-    val cpuVignette: Float,
-    val gpuPostProcessingEnabled: Boolean,
-    val gpuPostProcessingStage: GpuPostProcessingStage,
-    val gpuPostProcessingMethod: GpuPostProcessingMethod,
-    val gpuUpscaleFactor: Float,
-    val gpuSharpness: Float,
-    val gpuStrength: Float,
     val pacingPreset: PacingPreset,
     val vsyncAlignmentEnabled: Boolean,
     val vsyncRefreshOverride: VsyncRefreshOverride,
@@ -121,54 +102,6 @@ enum class CaptureSource(val prefValue: String) {
     }
 }
 
-/**
- * NPU enhance presets. Every entry maps to a handcrafted NNAPI graph built
- * inside nnapi_postprocess.cpp — OFF produces no graph, any other value
- * requires a dedicated NNAPI accelerator.
- */
-enum class NpuPostProcessingPreset(val prefValue: String, val nativeValue: Int) {
-    OFF("off", 0),
-    SHARPEN("sharpen", 1),
-    DETAIL_BOOST("detail_boost", 2),
-    CHROMA_CLEAN("chroma_clean", 3),
-    GAME_CRISP("game_crisp", 4);
-
-    companion object {
-        fun fromPref(value: String?): NpuPostProcessingPreset =
-            values().firstOrNull { it.prefValue == value } ?: OFF
-    }
-}
-
-/**
- * CPU post-process presets. Pure CPU pixel work that runs after the NPU
- * stage on the blit thread. Keep it cheap: these kernels fit in a couple
- * of milliseconds for 1080p.
- */
-enum class CpuPostProcessingPreset(val prefValue: String, val nativeValue: Int) {
-    OFF("off", 0),
-    ENHANCE_LUT("enhance_lut", 1),
-    WARM("warm", 2),
-    COOL("cool", 3),
-    VIGNETTE("vignette", 4),
-    GAMER_SHARP("gamer_sharp", 5),
-    CINEMATIC("cinematic", 6);
-
-    companion object {
-        fun fromPref(value: String?): CpuPostProcessingPreset =
-            values().firstOrNull { it.prefValue == value } ?: OFF
-    }
-}
-
-enum class GpuPostProcessingStage(val prefValue: String, val nativeValue: Int) {
-    BEFORE_LSFG("before_lsfg", 0),
-    AFTER_LSFG("after_lsfg", 1);
-
-    companion object {
-        fun fromPref(value: String?): GpuPostProcessingStage =
-            values().firstOrNull { it.prefValue == value } ?: AFTER_LSFG
-    }
-}
-
 enum class PacingPreset(val prefValue: String) {
     SMOOTH("smooth"),
     BALANCED("balanced"),
@@ -191,30 +124,6 @@ enum class VsyncRefreshOverride(val prefValue: String, val hz: Int) {
     companion object {
         fun fromPref(value: String?): VsyncRefreshOverride =
             values().firstOrNull { it.prefValue == value } ?: AUTO
-    }
-}
-
-enum class GpuPostProcessingMethod(val prefValue: String, val nativeValue: Int) {
-    FSR1_EASU_RCAS("fsr1_easu_rcas", 0),
-    AMD_CAS("amd_cas", 1),
-    NVIDIA_NIS("nvidia_nis", 2),
-    LANCZOS("lanczos", 3),
-    BICUBIC("bicubic", 4),
-    BILINEAR("bilinear", 5),
-    CATMULL_ROM("catmull_rom", 6),
-    MITCHELL_NETRAVALI("mitchell_netravali", 7),
-    ANIME4K_ULTRAFAST("anime4k_ultrafast", 8),
-    ANIME4K_RESTORE("anime4k_restore", 9),
-    XBRZ("xbrz", 10),
-    EDGE_DIRECTED("edge_directed", 11),
-    UNSHARP_MASK("unsharp_mask", 12),
-    LUMA_SHARPEN("luma_sharpen", 13),
-    CONTRAST_ADAPTIVE("contrast_adaptive", 14),
-    DEBAND("deband", 15);
-
-    companion object {
-        fun fromPref(value: String?): GpuPostProcessingMethod =
-            values().firstOrNull { it.prefValue == value } ?: FSR1_EASU_RCAS
     }
 }
 
@@ -260,32 +169,6 @@ class LsfgPreferences(ctx: Context) {
         frameGraphEnabled = prefs.getBoolean(KEY_FRAME_GRAPH, false),
         drawerEdge = DrawerEdge.fromPref(prefs.getString(KEY_DRAWER_EDGE, null)),
         overlayMode = OverlayMode.fromPref(prefs.getString(KEY_OVERLAY_MODE, null)),
-        // Forced off: GPU/Vulkan postprocessing is the only backend now (see
-        // gpuPostProcessingEnabled below) — NNAPI/NPU fallback is disabled at the
-        // source so no caller can accidentally re-enable it via stale prefs.
-        npuPostProcessingEnabled = false,
-        npuPostProcessingPreset = NpuPostProcessingPreset.fromPref(prefs.getString(KEY_NPU_PRESET, null)),
-        npuUpscaleFactor = prefs.getInt(KEY_NPU_UPSCALE, 1).coerceIn(1, 2),
-        npuAmount = prefs.getFloat(KEY_NPU_AMOUNT, 0.5f).coerceIn(0f, 1f),
-        npuRadius = prefs.getFloat(KEY_NPU_RADIUS, 1.0f).coerceIn(0.5f, 2.0f),
-        npuThreshold = prefs.getFloat(KEY_NPU_THRESHOLD, 0.0f).coerceIn(0f, 1f),
-        npuFp16 = prefs.getBoolean(KEY_NPU_FP16, true),
-        // Forced off — see the NPU note above; CPU postprocessing is disabled too.
-        cpuPostProcessingEnabled = false,
-        cpuPostProcessingPreset = CpuPostProcessingPreset.fromPref(prefs.getString(KEY_CPU_PRESET, null)),
-        cpuStrength = prefs.getFloat(KEY_CPU_STRENGTH, 0.5f).coerceIn(0f, 1f),
-        cpuSaturation = prefs.getFloat(KEY_CPU_SATURATION, 0.5f).coerceIn(0f, 1f),
-        cpuVibrance = prefs.getFloat(KEY_CPU_VIBRANCE, 0.0f).coerceIn(0f, 1f),
-        cpuVignette = prefs.getFloat(KEY_CPU_VIGNETTE, 0.0f).coerceIn(0f, 1f),
-        // Forced off — the "Image Quality" feature (GPU/NPU/CPU postprocessing
-        // filters) has been removed from the app entirely (see SHOW_IMAGE_QUALITY
-        // in FeatureFlags.kt). Only core Vulkan frame generation runs now.
-        gpuPostProcessingEnabled = false,
-        gpuPostProcessingStage = GpuPostProcessingStage.fromPref(prefs.getString(KEY_GPU_STAGE, null)),
-        gpuPostProcessingMethod = GpuPostProcessingMethod.fromPref(prefs.getString(KEY_GPU_METHOD, null)),
-        gpuUpscaleFactor = prefs.getFloat(KEY_GPU_UPSCALE, 1.0f).coerceIn(1.0f, 4.0f),
-        gpuSharpness = prefs.getFloat(KEY_GPU_SHARPNESS, 0.5f).coerceIn(0f, 1f),
-        gpuStrength = prefs.getFloat(KEY_GPU_STRENGTH, 0.5f).coerceIn(0f, 1f),
         pacingPreset = PacingPreset.fromPref(prefs.getString(KEY_PACING_PRESET, null)),
         vsyncAlignmentEnabled = prefs.getBoolean(KEY_VSYNC_ALIGN, PacingDefaults.VSYNC_ALIGNMENT),
         vsyncRefreshOverride = VsyncRefreshOverride.fromPref(prefs.getString(KEY_VSYNC_OVERRIDE, null)),
@@ -344,39 +227,6 @@ class LsfgPreferences(ctx: Context) {
     fun setOverlayMode(value: OverlayMode) = prefs.edit()
         .putString(KEY_OVERLAY_MODE, value.prefValue)
         .apply()
-    fun setNpuPostProcessingEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_NPU_POST, value).apply()
-    fun setNpuPostProcessingPreset(value: NpuPostProcessingPreset) = prefs.edit()
-        .putString(KEY_NPU_PRESET, value.prefValue)
-        .apply()
-    fun setNpuUpscaleFactor(value: Int) = prefs.edit().putInt(KEY_NPU_UPSCALE, value.coerceIn(1, 2)).apply()
-    fun setNpuAmount(value: Float) = prefs.edit().putFloat(KEY_NPU_AMOUNT, value.coerceIn(0f, 1f)).apply()
-    fun setNpuRadius(value: Float) = prefs.edit().putFloat(KEY_NPU_RADIUS, value.coerceIn(0.5f, 2.0f)).apply()
-    fun setNpuThreshold(value: Float) = prefs.edit().putFloat(KEY_NPU_THRESHOLD, value.coerceIn(0f, 1f)).apply()
-    fun setNpuFp16(value: Boolean) = prefs.edit().putBoolean(KEY_NPU_FP16, value).apply()
-    fun setCpuPostProcessingEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_CPU_POST, value).apply()
-    fun setCpuPostProcessingPreset(value: CpuPostProcessingPreset) = prefs.edit()
-        .putString(KEY_CPU_PRESET, value.prefValue)
-        .apply()
-    fun setCpuStrength(value: Float) = prefs.edit().putFloat(KEY_CPU_STRENGTH, value.coerceIn(0f, 1f)).apply()
-    fun setCpuSaturation(value: Float) = prefs.edit().putFloat(KEY_CPU_SATURATION, value.coerceIn(0f, 1f)).apply()
-    fun setCpuVibrance(value: Float) = prefs.edit().putFloat(KEY_CPU_VIBRANCE, value.coerceIn(0f, 1f)).apply()
-    fun setCpuVignette(value: Float) = prefs.edit().putFloat(KEY_CPU_VIGNETTE, value.coerceIn(0f, 1f)).apply()
-    fun setGpuPostProcessingEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_GPU_POST, value).apply()
-    fun setGpuPostProcessingStage(value: GpuPostProcessingStage) = prefs.edit()
-        .putString(KEY_GPU_STAGE, value.prefValue)
-        .apply()
-    fun setGpuPostProcessingMethod(value: GpuPostProcessingMethod) = prefs.edit()
-        .putString(KEY_GPU_METHOD, value.prefValue)
-        .apply()
-    fun setGpuUpscaleFactor(value: Float) = prefs.edit()
-        .putFloat(KEY_GPU_UPSCALE, value.coerceIn(1.0f, 4.0f))
-        .apply()
-    fun setGpuSharpness(value: Float) = prefs.edit()
-        .putFloat(KEY_GPU_SHARPNESS, value.coerceIn(0f, 1f))
-        .apply()
-    fun setGpuStrength(value: Float) = prefs.edit()
-        .putFloat(KEY_GPU_STRENGTH, value.coerceIn(0f, 1f))
-        .apply()
 
     fun setPacingPreset(value: PacingPreset) = prefs.edit()
         .putString(KEY_PACING_PRESET, value.prefValue)
@@ -425,25 +275,6 @@ class LsfgPreferences(ctx: Context) {
         private const val KEY_FRAME_GRAPH = "frame_graph"
         private const val KEY_DRAWER_EDGE = "drawer_edge"
         private const val KEY_OVERLAY_MODE = "overlay_mode"
-        private const val KEY_NPU_POST = "npu_post_processing"
-        private const val KEY_NPU_PRESET = "npu_post_processing_preset"
-        private const val KEY_NPU_UPSCALE = "npu_upscale_factor"
-        private const val KEY_NPU_AMOUNT = "npu_amount"
-        private const val KEY_NPU_RADIUS = "npu_radius"
-        private const val KEY_NPU_THRESHOLD = "npu_threshold"
-        private const val KEY_NPU_FP16 = "npu_fp16"
-        private const val KEY_CPU_POST = "cpu_post_processing"
-        private const val KEY_CPU_PRESET = "cpu_post_processing_preset"
-        private const val KEY_CPU_STRENGTH = "cpu_strength"
-        private const val KEY_CPU_SATURATION = "cpu_saturation"
-        private const val KEY_CPU_VIBRANCE = "cpu_vibrance"
-        private const val KEY_CPU_VIGNETTE = "cpu_vignette"
-        private const val KEY_GPU_POST = "gpu_post_processing"
-        private const val KEY_GPU_STAGE = "gpu_post_processing_stage"
-        private const val KEY_GPU_METHOD = "gpu_post_processing_method"
-        private const val KEY_GPU_UPSCALE = "gpu_upscale_factor"
-        private const val KEY_GPU_SHARPNESS = "gpu_sharpness"
-        private const val KEY_GPU_STRENGTH = "gpu_strength"
         private const val KEY_PACING_PRESET = "pacing_preset"
         private const val KEY_VSYNC_ALIGN = "vsync_alignment"
         private const val KEY_VSYNC_OVERRIDE = "vsync_refresh_override"

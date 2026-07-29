@@ -79,11 +79,8 @@ add_library(lsfg-android SHARED
     android_vk_probe.cpp
     android_vk_session.cpp
     ahb_image_bridge.cpp
-    gpu_postprocess.cpp
     lsfg_render_loop.cpp
     nnapi_npu.cpp
-    nnapi_postprocess.cpp
-    cpu_postprocess.cpp
     crash_reporter.cpp
 )
 
