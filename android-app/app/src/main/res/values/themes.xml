@@ -5,7 +5,7 @@
         This XML theme is used only by the Android window / activity chrome
         (status bar, nav bar, splash).
     -->
-    <style name="Theme.LsfgAndroid" parent="android:Theme.Material.NoTitleBar.Fullscreen">
+    <style name="Theme.LsfgAndroid" parent="android:Theme.Material.NoActionBar.Fullscreen">
         <!-- Window chrome -->
         <item name="android:windowBackground">@color/space_black</item>
         <item name="android:navigationBarColor">@color/nav_bar_color</item>
