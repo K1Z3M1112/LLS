@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Round variant of the DeepDrop icon for circular launcher slots.
+    Same chevron motif on a circular dark-red–tinted background.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Circular background -->
+    <path
+        android:pathData="M54,54 m-54,0 a54,54 0,1,0 108,0 a54,54 0,1,0 -108,0"
+        android:fillColor="#08080F" />
+
+    <!-- Radial glow -->
+    <path
+        android:pathData="M54,54 m-54,0 a54,54 0,1,0 108,0 a54,54 0,1,0 -108,0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="54"
+                android:centerY="54"
+                android:gradientRadius="54"
+                android:type="radial">
+                <item android:offset="0" android:color="#33FF1744" />
+                <item android:offset="0.6" android:color="#08FF1744" />
+                <item android:offset="1" android:color="#00FF1744" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Left chevron -->
+    <path
+        android:pathData="M24,34 L43,54 L24,74 L32,74 L51,54 L32,34 Z"
+        android:fillColor="#FF1744"
+        android:fillAlpha="0.85" />
+
+    <!-- Centre chevron (gradient) -->
+    <path
+        android:pathData="M38,34 L57,54 L38,74 L46,74 L65,54 L46,34 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="38"
+                android:startY="34"
+                android:endX="65"
+                android:endY="74"
+                android:type="linear">
+                <item android:offset="0" android:color="#FF4069" />
+                <item android:offset="1" android:color="#FF1744" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Trailing ghost chevron -->
+    <path
+        android:pathData="M52,34 L71,54 L52,74 L60,74 L79,54 L60,34 Z"
+        android:fillColor="#FF1744"
+        android:fillAlpha="0.28" />
+
+</vector>
