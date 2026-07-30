@@ -1,0 +1,160 @@
+name: Build Deepdrop APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      enable_ncnn:
+        description: "Build with the NCNN AI frame-gen backend enabled"
+        type: boolean
+        default: true
+
+env:
+  # Tencent/ncnn is date-tagged (YYYYMMDD) and ships prebuilt Android+Vulkan
+  # archives per release. Pin a known-good tag here; bump it deliberately
+  # rather than always tracking "latest" so a CI break upstream doesn't
+  # silently break this build. Check https://github.com/Tencent/ncnn/releases
+  # before bumping.
+  NCNN_VERSION: "20260526"
+  # push/pull_request runs don't have workflow_dispatch inputs -- default to
+  # building with NCNN enabled there too, matching the toggle's default.
+  ENABLE_NCNN: ${{ github.event.inputs.enable_ncnn != 'false' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # framegen-native-lib/thirdparty/{vulkan-loader,pe-dll-parser,dxbc-to-spirv,toml-parser} are git
+      # submodules pointed at upstream repos. Since this repo was assembled
+      # from zip snapshots (not git clones), the submodule *pointers* need to
+      # exist as real .gitmodules entries — see "Repo setup" note in the
+      # root README if this step fails with "No url found for submodule".
+      - name: Checkout submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          # FIX: cache Gradle dependencies between runs to cut ~3 min off CI time.
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK 27.0.12077973 and CMake 3.22.1
+        run: |
+          sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
+
+      # NCNN AI frame-gen backend: download Tencent's prebuilt Android+Vulkan
+      # libs (arm64-v8a + x86_64, matching our splits.abi list) instead of
+      # building ncnn from source, which would add ~10-20 min per ABI to
+      # every CI run. NCNN_ANDROID_ROOT is read by app/build.gradle.kts,
+      # which forwards it to CMake -- see app/src/main/cpp/CMakeLists.txt
+      # for how ncnn_DIR gets resolved per-ABI from it.
+      #
+      # Note: this prebuilt is built against a newer NDK (r29) than the
+      # r27 we pin for our own sources above -- for a plain C/C++ static
+      # library like ncnn this is normally fine (no libc++ ABI break across
+      # NDK releases), but if you hit link errors, try building ncnn from
+      # source with NDK 27 instead (see the comment in CMakeLists.txt).
+      - name: Cache ncnn Android+Vulkan prebuilt
+        if: ${{ env.ENABLE_NCNN == 'true' }}
+        id: cache-ncnn
+        uses: actions/cache@v4
+        with:
+          path: ncnn-android
+          key: ncnn-android-vulkan-${{ env.NCNN_VERSION }}
+
+      - name: Download ncnn Android+Vulkan prebuilt
+        if: ${{ env.ENABLE_NCNN == 'true' && steps.cache-ncnn.outputs.cache-hit != 'true' }}
+        run: |
+          curl -fL -o ncnn-android-vulkan.zip \
+            "https://github.com/Tencent/ncnn/releases/download/${NCNN_VERSION}/ncnn-${NCNN_VERSION}-android-vulkan.zip"
+          unzip -q ncnn-android-vulkan.zip
+          mv "ncnn-${NCNN_VERSION}-android-vulkan" ncnn-android
+          # sanity check both ABIs we actually build are present
+          test -d ncnn-android/arm64-v8a/lib/cmake/ncnn
+          test -d ncnn-android/x86_64/lib/cmake/ncnn
+
+      - name: Export NCNN_ANDROID_ROOT
+        if: ${{ env.ENABLE_NCNN == 'true' }}
+        run: echo "NCNN_ANDROID_ROOT=${{ github.workspace }}/ncnn-android" >> "$GITHUB_ENV"
+
+      # FIX: cache the NDK build output (.o/.a intermediates + generated CMake).
+      # The NDK compile step is the single largest CI cost (~8-12 min cold).
+      # Cache key invalidates on: OS, NDK version, CMakeLists hash, and all C++
+      # source files. When a source file changes only the dirty TU recompiles.
+      - name: Cache NDK build intermediates
+        uses: actions/cache@v4
+        with:
+          path: |
+            android-app/.cxx
+            android-app/app/.cxx
+          key: ndk-${{ runner.os }}-ndk27-cmake322-ncnn${{ env.ENABLE_NCNN }}-${{ env.NCNN_VERSION }}-${{ hashFiles('android-app/app/src/main/cpp/CMakeLists.txt', 'android-app/app/src/main/cpp/**/*.cpp', 'android-app/app/src/main/cpp/**/*.hpp') }}
+          restore-keys: |
+            ndk-${{ runner.os }}-ndk27-cmake322-ncnn${{ env.ENABLE_NCNN }}-${{ env.NCNN_VERSION }}-
+            ndk-${{ runner.os }}-ndk27-
+
+      # FIX: cache the Gradle build cache (separate from the wrapper/deps cache
+      # provided by setup-java above). This covers incremental compilation of
+      # Kotlin and dexing, saving another 1-2 min on unchanged Kotlin files.
+      - name: Cache Gradle build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android-app/**/*.gradle.kts', 'android-app/**/*.gradle', 'android-app/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Grant execute permission for gradlew
+        working-directory: android-app
+        run: chmod +x gradlew
+
+      - name: Decode release keystore (optional)
+        if: ${{ env.LSFGA_STORE_FILE_B64 != '' }}
+        working-directory: android-app
+        env:
+          LSFGA_STORE_FILE_B64: ${{ secrets.LSFGA_STORE_FILE_B64 }}
+        run: |
+          echo "$LSFGA_STORE_FILE_B64" | base64 -d > release.keystore
+          {
+            echo "LSFGAndroid_STORE_FILE=release.keystore"
+            echo "LSFGAndroid_STORE_PASSWORD=${{ secrets.LSFGA_STORE_PASSWORD }}"
+            echo "LSFGAndroid_KEY_ALIAS=${{ secrets.LSFGA_KEY_ALIAS }}"
+            echo "LSFGAndroid_KEY_PASSWORD=${{ secrets.LSFGA_KEY_PASSWORD }}"
+          } >> gradle.properties
+
+      - name: Build debug APK
+        working-directory: android-app
+        run: ./gradlew :app:assembleDebug --stacktrace --build-cache
+
+      - name: Build release APK
+        working-directory: android-app
+        run: ./gradlew :app:assembleRelease --stacktrace --build-cache
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepdrop-debug-apk
+          path: android-app/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepdrop-release-apk
+          path: android-app/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
