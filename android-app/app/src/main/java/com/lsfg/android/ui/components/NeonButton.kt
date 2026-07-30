@@ -1,3 +1,8 @@
+@file:Suppress("DEPRECATION") // rememberRipple() is deprecated (error-level) in this BOM's
+// material-ripple version, but its replacement `ripple()` isn't available yet in the
+// compose-bom 2024.09.03 pin (unresolved reference when tried) -- suppress until the BOM
+// is bumped past whatever patch actually ships ripple().
+
 package com.lsfg.android.ui.components
 
 import androidx.compose.foundation.background
@@ -6,7 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.ripple.ripple
+import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -46,7 +51,7 @@ fun NeonButton(
             .border(1.dp, borderColor, shape)
             .clickable(
                 interactionSource = interactionSource,
-                indication = ripple(color = Color.White),
+                indication = rememberRipple(color = Color.White),
                 enabled = enabled,
                 onClick = onClick,
             )
@@ -89,7 +94,7 @@ fun OutlineButton(
             .border(1.dp, effectiveColor.copy(alpha = 0.50f), shape)
             .clickable(
                 interactionSource = interactionSource,
-                indication = ripple(color = effectiveColor),
+                indication = rememberRipple(color = effectiveColor),
                 enabled = enabled,
                 onClick = onClick,
             )
@@ -134,7 +139,7 @@ fun MultiplierChip(
             .border(1.dp, borderColor, shape)
             .clickable(
                 interactionSource = interactionSource,
-                indication = ripple(color = RedCore),
+                indication = rememberRipple(color = RedCore),
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
