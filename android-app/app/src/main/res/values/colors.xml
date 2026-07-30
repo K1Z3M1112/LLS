@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- All semantic colour decisions live in Color.kt (Compose).
+     This file provides only the legacy XML colours required by
+     the non-Compose surface (notification tint, status bar, etc.). -->
+<resources>
+    <!-- Primary brand -->
+    <color name="red_core">#FFFF1744</color>
+    <color name="red_deep">#FFCC0033</color>
+
+    <!-- Backgrounds -->
+    <color name="space_black">#FF08080F</color>
+    <color name="space_navy">#FF0D0D1A</color>
+
+    <!-- Notification accent -->
+    <color name="notification_accent">#FFFF1744</color>
+
+    <!-- Status bar / nav bar (window insets) -->
+    <color name="status_bar_color">#FF08080F</color>
+    <color name="nav_bar_color">#FF0D0D1A</color>
+</resources>
