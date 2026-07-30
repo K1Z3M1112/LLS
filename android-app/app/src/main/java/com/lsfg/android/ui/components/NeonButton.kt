@@ -1,7 +1,9 @@
-@file:Suppress("DEPRECATION") // rememberRipple() is deprecated (error-level) in this BOM's
-// material-ripple version, but its replacement `ripple()` isn't available yet in the
-// compose-bom 2024.09.03 pin (unresolved reference when tried) -- suppress until the BOM
-// is bumped past whatever patch actually ships ripple().
+@file:Suppress("DEPRECATION", "DEPRECATION_ERROR") // rememberRipple() is deprecated at
+// ERROR level in this BOM's material-ripple version (a separate diagnostic ID,
+// DEPRECATION_ERROR, from the plain DEPRECATION warning -- suppressing only
+// "DEPRECATION" doesn't silence it). Its replacement `ripple()` isn't available yet in
+// the compose-bom 2024.09.03 pin (unresolved reference when tried) -- suppress both
+// until the BOM is bumped past whatever patch actually ships ripple().
 
 package com.lsfg.android.ui.components
 
