@@ -2,9 +2,9 @@
 
 #include "ncnn_backend.hpp"
 
-#include <ncnn/net.h>
-#include <ncnn/mat.h>
-#include <ncnn/gpu.h>
+#include <net.h>
+#include <mat.h>
+#include <gpu.h>
 
 #include <algorithm>
 #include <filesystem>
