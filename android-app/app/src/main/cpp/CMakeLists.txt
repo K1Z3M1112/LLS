@@ -125,6 +125,24 @@ if(LSFGVK_ENABLE_NCNN)
     #   cmake -DNCNN_VULKAN=ON -DANDROID_ABI=<abi> -DANDROID_NDK=... \
     #         -DCMAKE_TOOLCHAIN_FILE=<ndk>/build/cmake/android.toolchain.cmake ..
     find_package(ncnn REQUIRED)
+
+    # ncnn's exported ncnn-config.cmake sets INTERFACE_COMPILE_OPTIONS
+    # "-fno-rtti;-fno-exceptions" on the `ncnn` target (it's built that way
+    # upstream to save size). Because usage-requirement flags from linked
+    # libraries are appended AFTER our own target's flags on the compile
+    # command line, that silently overrides AGP's default -frtti -fexceptions
+    # for every file in lsfg-android -- not just the ones that touch ncnn.
+    # That breaks any try/catch elsewhere in this target, e.g.:
+    #   android_shader_loader.cpp:346:9: error: cannot use 'try' with
+    #   exceptions disabled
+    # Strip those interface options right after importing the target so they
+    # never propagate; ncnn's own .a was already built with them baked in via
+    # its own compile definitions, so this only affects *our* translation
+    # units, which all need normal RTTI/exceptions.
+    if(TARGET ncnn)
+        set_target_properties(ncnn PROPERTIES INTERFACE_COMPILE_OPTIONS "")
+    endif()
+
     target_link_libraries(lsfg-android PRIVATE ncnn)
     target_compile_definitions(lsfg-android PRIVATE LSFGVK_ENABLE_NCNN=1)
     message(STATUS "NCNN AI backend: ENABLED")
