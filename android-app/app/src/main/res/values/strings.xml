@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DeepDrop</string>
+    <string name="accessibility_service_label">DeepDrop Frame Gen</string>
+    <string name="accessibility_service_description">Detects foreground app changes to pause and resume frame generation automatically.</string>
+
+    <!-- Notifications -->
+    <string name="notif_channel_session">Frame Gen Session</string>
+    <string name="notif_channel_session_desc">Ongoing frame generation foreground service.</string>
+    <string name="notif_channel_benchmark">Benchmark</string>
+    <string name="notif_channel_benchmark_desc">Benchmark progress and results.</string>
+    <string name="notif_session_title">DeepDrop Active</string>
+    <string name="notif_session_text">Frame generation is running.</string>
+    <string name="notif_benchmark_title">Benchmark Running</string>
+    <string name="notif_benchmark_text">Measuring frame gen performance…</string>
+
+    <!-- Setup -->
+    <string name="setup_pick_dll">Pick Lossless.dll</string>
+    <string name="setup_extracting">Extracting shaders…</string>
+    <string name="setup_probing">Probing GPU…</string>
+    <string name="setup_done">Setup Complete</string>
+
+    <!-- Common -->
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="settings">Settings</string>
+    <string name="benchmark">Benchmark</string>
+    <string name="close">Close</string>
+    <string name="retry">Retry</string>
+</resources>
