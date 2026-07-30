@@ -5,7 +5,7 @@
         <exclude domain="file" path="spirv/" />
         <exclude domain="file" path="native_crash.txt" />
         <exclude domain="file" path="native_log.txt" />
-        <exclude domain="external-files" path="benchmarks/" />
+        <exclude domain="external" path="benchmarks/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="spirv/" />
