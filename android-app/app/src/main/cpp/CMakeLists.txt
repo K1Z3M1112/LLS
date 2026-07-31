@@ -92,6 +92,13 @@ set(NCNN_DISABLE_RTTI OFF CACHE BOOL "" FORCE)
 # and breaks that recovery path. Force it off, matching NCNN_DISABLE_RTTI above.
 set(NCNN_DISABLE_EXCEPTION OFF CACHE BOOL "" FORCE)
 set(NCNN_PIXEL_ROTATE OFF CACHE BOOL "" FORCE)
+# ncnn's x86 bf16 gemm kernel (convolution_im2col_gemm_bf16s.h) uses AVX512-BF16
+# intrinsics that NDK 27's LLVM backend cannot lower during ThinLTO codegen —
+# ld.lld aborts with "LLVM ERROR: Cannot select: v32bf16 insert_subvector" when
+# linking liblsfg-android.so for x86_64 in release (RelWithDebInfo/-flto=thin).
+# rife_warp_layer forces fp32/non-packed storage and never exercises this bf16
+# path, so disable it outright rather than fighting LTO codegen.
+set(NCNN_BF16 OFF CACHE BOOL "" FORCE)
 add_subdirectory("${LSFG_ROOT}/thirdparty/ncnn" "${CMAKE_BINARY_DIR}/ncnn" EXCLUDE_FROM_ALL)
 
 # -----------------------------------------------------------------------------
