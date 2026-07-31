@@ -36,7 +36,6 @@ android {
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
                     "-DANDROID_PLATFORM=android-29",
-                    "-DANDROID_CPP_FEATURES=rtti exceptions",
                     "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--gc-sections,--icf=safe"
                 )
             }
