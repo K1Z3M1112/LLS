@@ -169,8 +169,7 @@ int WarpLayer::create_pipeline(const ncnn::Option& opt) {
     shader_opt.use_fp16_storage = false;
     shader_opt.use_fp16_packed = false;
     shader_opt.use_fp16_arithmetic = false;
-    shader_opt.use_shader_pack8 = false;
-    shader_opt.use_image_storage = false;
+    shader_opt.use_packing_layout = false;
 
     std::vector<uint32_t> spirv;
     int ret = ncnn::compile_spirv_module(
