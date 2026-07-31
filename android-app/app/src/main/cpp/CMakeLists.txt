@@ -85,6 +85,12 @@ set(NCNN_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(NCNN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(NCNN_BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
 set(NCNN_DISABLE_RTTI OFF CACHE BOOL "" FORCE)
+# lsfg-android's own code (lsfg_render_loop.cpp, android_shader_loader.cpp) uses
+# try/catch to recover from VK_ERROR_DEVICE_LOST etc. without crashing the app.
+# ncnn defaults NCNN_DISABLE_EXCEPTION=ON on Android and applies -fno-exceptions
+# as a PUBLIC compile option, which leaks onto lsfg-android via target_link_libraries
+# and breaks that recovery path. Force it off, matching NCNN_DISABLE_RTTI above.
+set(NCNN_DISABLE_EXCEPTION OFF CACHE BOOL "" FORCE)
 set(NCNN_PIXEL_ROTATE OFF CACHE BOOL "" FORCE)
 add_subdirectory("${LSFG_ROOT}/thirdparty/ncnn" "${CMAKE_BINARY_DIR}/ncnn" EXCLUDE_FROM_ALL)
 
