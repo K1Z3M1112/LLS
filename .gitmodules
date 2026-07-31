@@ -1,0 +1,15 @@
+[submodule "framegen-native-lib/thirdparty/pe-dll-parser"]
+	path = framegen-native-lib/thirdparty/pe-dll-parser
+	url = https://github.com/trailofbits/pe-parse
+[submodule "framegen-native-lib/thirdparty/dxbc-to-spirv"]
+	path = framegen-native-lib/thirdparty/dxbc-to-spirv
+	url = https://github.com/PancakeTAS/dxbc.git
+[submodule "framegen-native-lib/thirdparty/toml-parser"]
+	path = framegen-native-lib/thirdparty/toml-parser
+	url = https://github.com/ToruNiina/toml11
+[submodule "framegen-native-lib/thirdparty/vulkan-loader"]
+	path = framegen-native-lib/thirdparty/vulkan-loader
+	url = https://github.com/zeux/volk
+[submodule "framegen-native-lib/thirdparty/ncnn"]
+	path = framegen-native-lib/thirdparty/ncnn
+	url = https://github.com/Tencent/ncnn
