@@ -5,6 +5,33 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# -----------------------------------------------------------------------------
+# The NDK's android.toolchain.cmake unconditionally appends
+# "-fno-exceptions -fno-rtti" to CMAKE_CXX_FLAGS as a hardcoded default,
+# regardless of ANDROID_CPP_FEATURES (that Gradle/CMake setting only
+# controls whether -fexceptions/-frtti are ALSO added — it does not stop
+# the -fno- pair from being added too). Because CMAKE_CXX_FLAGS is placed
+# after target_compile_options() in the generated ninja compile command,
+# neither a target_compile_options(-fexceptions -frtti) override nor
+# ANDROID_CPP_FEATURES can win: clang sees both -fexceptions and
+# -fno-exceptions and honors whichever comes last, which is always the
+# toolchain file's -fno- pair.
+#
+# framegen-native-lib (reused verbatim from the Linux project) and the
+# DXBC translator legitimately throw on error (e.g. missing Vulkan
+# extension — see lsfg_render_loop.cpp's initFramegen/createFramegenContext,
+# which catch to fall back to capture-only mode instead of crashing), so
+# exceptions/RTTI must actually be enabled, not just requested.
+#
+# Strip the toolchain's -fno- flags out of CMAKE_CXX_FLAGS directly, before
+# any add_subdirectory()/add_library() below evaluates it, so every target
+# in this build (including the vendored subdirectories) compiles with
+# exceptions and RTTI on.
+string(REPLACE "-fno-exceptions" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+string(REPLACE "-fno-rtti" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -frtti")
+# -----------------------------------------------------------------------------
+
 # Reach into the Linux project tree for sources we want to reuse as-is.
 set(LSFG_ROOT "${CMAKE_SOURCE_DIR}/../../../../../framegen-native-lib")
 if(NOT EXISTS "${LSFG_ROOT}/framegen/CMakeLists.txt")
@@ -135,12 +162,7 @@ target_link_libraries(lsfg-android
 # see lsfg_render_loop.cpp's initFramegen/createFramegenContext, which catch
 # to fall back to capture-only mode instead of crashing).
 #
-# The real fix for exceptions/rtti is -DANDROID_CPP_FEATURES=exceptions rtti,
-# set in app/build.gradle.kts' externalNativeBuild.cmake.arguments — that
-# stops the NDK's CMake toolchain file from ever appending
-# "-fno-exceptions -fno-rtti" to CMAKE_CXX_FLAGS in the first place.
-# (CMAKE_CXX_FLAGS is emitted *after* target_compile_options() in the
-# generated ninja command, so trying to override it here with
-# target_compile_options() does not work — the later flags win.)
-# This line is kept only as a harmless, explicit secondary safeguard.
+# See the CMAKE_CXX_FLAGS fixup near the top of this file for why
+# -fexceptions/-frtti have to be forced this way. This line is kept as an
+# explicit, self-documenting reminder at the point that actually needs it.
 target_compile_options(lsfg-android PRIVATE -fexceptions -frtti)
