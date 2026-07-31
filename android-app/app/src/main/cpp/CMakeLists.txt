@@ -95,7 +95,8 @@ if(NOT EXISTS "${NCNN_ABI_ROOT}/lib/cmake/ncnn/ncnnConfig.cmake")
         "${NCNN_ABI_ROOT}. Expected .../${ANDROID_ABI}/lib/cmake/ncnn/ncnnConfig.cmake "
         "— check NCNN_ANDROID_ROOT and that the downloaded package covers this ABI.")
 endif()
-find_package(ncnn REQUIRED CONFIG PATHS "${NCNN_ABI_ROOT}/lib/cmake/ncnn" NO_DEFAULT_PATH)
+find_package(ncnn REQUIRED CONFIG PATHS "${NCNN_ABI_ROOT}/lib/cmake/ncnn"
+    NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 
 # -----------------------------------------------------------------------------
 # lsfg-android — JNI shared library.
