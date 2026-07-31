@@ -342,13 +342,7 @@ int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir
     int translated = 0;
     for (uint32_t resId : kResourceIds) {
         const auto &dxbc = blobsByResId.at(resId);
-        std::vector<uint8_t> spirv;
-        try {
-            spirv = translate_dxbc_to_spirv(dxbc);
-        } catch (const std::exception &e) {
-            LOGE("DXBC→SPIR-V failed for resource %u: %s", resId, e.what());
-            return kErrTranslationFailed;
-        }
+        std::vector<uint8_t> spirv = translate_dxbc_to_spirv(dxbc);
         if (spirv.empty()) {
             LOGE("Empty SPIR-V for resource %u", resId);
             return kErrTranslationFailed;
