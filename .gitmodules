@@ -10,3 +10,6 @@
 [submodule "framegen-native-lib/thirdparty/vulkan-loader"]
 	path = framegen-native-lib/thirdparty/vulkan-loader
 	url = https://github.com/zeux/volk
+[submodule "framegen-native-lib/thirdparty/ncnn"]
+	path = framegen-native-lib/thirdparty/ncnn
+	url = https://github.com/Tencent/ncnn
