@@ -31,13 +31,12 @@ android {
                     "-fvisibility=hidden",
                     "-fvisibility-inlines-hidden",
                     "-ffunction-sections",
-                    "-fdata-sections",
-                    "-fexceptions",
-                    "-frtti"
+                    "-fdata-sections"
                 )
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
                     "-DANDROID_PLATFORM=android-29",
+                    "-DANDROID_CPP_FEATURES=rtti exceptions",
                     "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--gc-sections,--icf=safe"
                 )
             }
