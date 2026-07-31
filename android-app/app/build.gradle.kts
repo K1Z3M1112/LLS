@@ -36,16 +36,15 @@ android {
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
                     "-DANDROID_PLATFORM=android-29",
-                    "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--gc-sections,--icf=safe",
-                    // The NDK's CMake toolchain file appends
-                    // "-fno-exceptions -fno-rtti" to CMAKE_CXX_FLAGS, and
-                    // CMAKE_CXX_FLAGS is placed *after* target_compile_options()
-                    // in the generated ninja command, so clang (last flag wins)
-                    // always ends up with exceptions/rtti disabled regardless
-                    // of the target_compile_options() override in
-                    // CMakeLists.txt. Telling the toolchain file directly to
-                    // keep exceptions/rtti on is the only reliable fix.
-                    "-DANDROID_CPP_FEATURES=exceptions rtti"
+                    "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--gc-sections,--icf=safe"
+                    // NOTE: exceptions/RTTI are force-enabled in
+                    // src/main/cpp/CMakeLists.txt, not here. The NDK
+                    // toolchain file appends -fno-exceptions/-fno-rtti to
+                    // CMAKE_CXX_FLAGS unconditionally — ANDROID_CPP_FEATURES
+                    // only adds -fexceptions/-frtti alongside them, it
+                    // doesn't remove the -fno- pair, so setting it here
+                    // doesn't actually fix the conflict. See the top of
+                    // CMakeLists.txt for the real fix.
                 )
             }
         }
