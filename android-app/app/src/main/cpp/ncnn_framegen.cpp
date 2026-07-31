@@ -1,7 +1,13 @@
-#include "ncnn_framegen.hpp"
-
+// net.h/mat.h must come first: ncnn's bundled simplevk.h defines the same
+// Vulkan handle types (VkResult, VkFormat, ...) as the real NDK
+// <vulkan/vulkan_core.h>. Including ncnn's headers first lets simplevk.h
+// define VK_DEFINE_NON_DISPATCHABLE_HANDLE, so ncnn_framegen.hpp's guard
+// around its own vulkan_core.h include skips it instead of redefining
+// everything.
 #include <net.h>
 #include <mat.h>
+
+#include "ncnn_framegen.hpp"
 
 #include <android/hardware_buffer.h>
 #include <android/log.h>
