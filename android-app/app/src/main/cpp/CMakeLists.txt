@@ -99,6 +99,12 @@ set(NCNN_PIXEL_ROTATE OFF CACHE BOOL "" FORCE)
 # rife_warp_layer forces fp32/non-packed storage and never exercises this bf16
 # path, so disable it outright rather than fighting LTO codegen.
 set(NCNN_BF16 OFF CACHE BOOL "" FORCE)
+# NCNN_BF16 (above) only gates bf16 *inference* support in ops — it does NOT
+# disable this. NCNN_AVX512BF16 is a separate runtime-CPU-dispatch option that
+# defaults ON whenever the host compiler supports -mavx512bf16, and is what
+# actually generates the AVX512-BF16 fp32<->bf16 cast code in x86_usability.h /
+# cast_bf16.h — the real source of the ld.lld ThinLTO crash. Force it off too.
+set(NCNN_AVX512BF16 OFF CACHE BOOL "" FORCE)
 add_subdirectory("${LSFG_ROOT}/thirdparty/ncnn" "${CMAKE_BINARY_DIR}/ncnn" EXCLUDE_FROM_ALL)
 
 # -----------------------------------------------------------------------------
