@@ -31,7 +31,9 @@ android {
                     "-fvisibility=hidden",
                     "-fvisibility-inlines-hidden",
                     "-ffunction-sections",
-                    "-fdata-sections"
+                    "-fdata-sections",
+                    "-fexceptions",
+                    "-frtti"
                 )
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
