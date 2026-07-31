@@ -129,3 +129,14 @@ target_link_libraries(lsfg-android
         ${neuralnetworks-lib}
         android
 )
+
+# framegen-native-lib (reused verbatim from the Linux project) and the DXBC
+# translator legitimately throw on error (e.g. missing Vulkan extension —
+# see lsfg_render_loop.cpp's initFramegen/createFramegenContext, which catch
+# to fall back to capture-only mode instead of crashing). AGP's CMake/Ninja
+# integration unconditionally appends "-fno-exceptions -fno-rtti" to every
+# target's compile flags *after* CMAKE_CXX_FLAGS and any -DANDROID_CPP_FEATURES
+# toolchain argument, so neither cppFlags nor ANDROID_CPP_FEATURES can turn
+# them back on. target_compile_options() is emitted last in the generated
+# ninja rule, so it's the only reliable way to override AGP's default here.
+target_compile_options(lsfg-android PRIVATE -fexceptions -frtti)
