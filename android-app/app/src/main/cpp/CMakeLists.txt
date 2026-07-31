@@ -133,10 +133,14 @@ target_link_libraries(lsfg-android
 # framegen-native-lib (reused verbatim from the Linux project) and the DXBC
 # translator legitimately throw on error (e.g. missing Vulkan extension —
 # see lsfg_render_loop.cpp's initFramegen/createFramegenContext, which catch
-# to fall back to capture-only mode instead of crashing). AGP's CMake/Ninja
-# integration unconditionally appends "-fno-exceptions -fno-rtti" to every
-# target's compile flags *after* CMAKE_CXX_FLAGS and any -DANDROID_CPP_FEATURES
-# toolchain argument, so neither cppFlags nor ANDROID_CPP_FEATURES can turn
-# them back on. target_compile_options() is emitted last in the generated
-# ninja rule, so it's the only reliable way to override AGP's default here.
+# to fall back to capture-only mode instead of crashing).
+#
+# The real fix for exceptions/rtti is -DANDROID_CPP_FEATURES=exceptions rtti,
+# set in app/build.gradle.kts' externalNativeBuild.cmake.arguments — that
+# stops the NDK's CMake toolchain file from ever appending
+# "-fno-exceptions -fno-rtti" to CMAKE_CXX_FLAGS in the first place.
+# (CMAKE_CXX_FLAGS is emitted *after* target_compile_options() in the
+# generated ninja command, so trying to override it here with
+# target_compile_options() does not work — the later flags win.)
+# This line is kept only as a harmless, explicit secondary safeguard.
 target_compile_options(lsfg-android PRIVATE -fexceptions -frtti)
