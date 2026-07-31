@@ -30,6 +30,7 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import com.lsfg.android.prefs.DrawerEdge
+import com.lsfg.android.prefs.FrameGenEngine
 import com.lsfg.android.prefs.LsfgPreferences
 import com.lsfg.android.prefs.OverlayMode
 import com.lsfg.android.prefs.PacingDefaults
@@ -348,6 +349,64 @@ class SettingsDrawerOverlay(
         // ---- Frame Generation (expanded by default so drawer shows content on first open) ----
         val frameGenSection = collapsibleSection(panel, "FRAME GENERATION", initiallyExpanded = true)
 
+        // Forward-declared so the engine chip click handler (defined further down, once the
+        // FP16 rows exist) can flip their visibility. Mirrors the in-app Params screen picker.
+        var currentEngine = initial.engine
+        var fp16LosslessRow: View? = null
+        var fp16NcnnRow: View? = null
+
+        val engineItems = listOf(
+            FrameGenEngine.LOSSLESS_DLL to "Lossless.dll",
+            FrameGenEngine.NCNN to "ncnn",
+        )
+        val engineBtns = mutableListOf<Button>()
+        fun paintEngineChips(selected: FrameGenEngine) {
+            engineBtns.forEachIndexed { i, btn ->
+                val isSel = engineItems[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
+        frameGenSection.addView(
+            TextView(ctx).apply {
+                text = "Engine"
+                setTextColor(COLOR_ON_SURFACE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setPadding(0, 0, 0, dp(2))
+            },
+        )
+        val engineRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        engineItems.forEach { (_, label) ->
+            val btn = Button(ctx).apply {
+                text = label
+                isAllCaps = false
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dp(10).toFloat()
+                }
+                setPadding(dp(4), dp(4), dp(4), dp(4))
+            }
+            engineBtns.add(btn)
+            engineRow.addView(
+                btn,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    leftMargin = dp(2)
+                    rightMargin = dp(2)
+                },
+            )
+        }
+        frameGenSection.addView(engineRow)
+        paintEngineChips(currentEngine)
+        frameGenSection.addView(divider())
+        frameGenSection.addView(sectionSpacer(4))
+
         frameGenSection.addView(switchRow(
             label = "DeepFG Frame Gen",
             initial = initial.lsfgEnabled,
@@ -393,14 +452,50 @@ class SettingsDrawerOverlay(
             NativeBridge.isFramegenFp16Supported(fp16CacheDir)
         }.getOrDefault(false)
         if (fp16Available) {
-            frameGenSection.addView(switchRow(
+            fp16LosslessRow = switchRow(
                 label = "FP16 frame-gen shaders",
                 initial = initial.framegenFp16,
             ) {
                 Log.i(TAG, "live: framegenFp16=$it")
                 prefs.setFramegenFp16(it)
                 liveParamsListener?.onParamsChanged()
-            })
+            }.also {
+                it.visibility = if (currentEngine == FrameGenEngine.LOSSLESS_DLL) View.VISIBLE else View.GONE
+                frameGenSection.addView(it)
+            }
+        }
+
+        // ncnn fp16 vs fp32 model weights — the ncnn counterpart to the toggle above.
+        // Only meaningful when the ncnn engine is active; native side ignores it otherwise.
+        fp16NcnnRow = switchRow(
+            label = "ncnn FP16 model weights",
+            initial = initial.ncnnUseFp16,
+        ) {
+            Log.i(TAG, "live: ncnnUseFp16=$it")
+            prefs.setNcnnUseFp16(it)
+            liveParamsListener?.onParamsChanged()
+        }.also {
+            it.visibility = if (currentEngine == FrameGenEngine.NCNN) View.VISIBLE else View.GONE
+            frameGenSection.addView(it)
+        }
+
+        // Now that both FP16 rows exist, wire up the engine chips to switch the active
+        // backend live. Like the FP16 toggles, this requires a context re-init since the
+        // shader/model pipeline is bound at LSFG_3_X::initialize time.
+        engineBtns.forEachIndexed { i, btn ->
+            btn.setOnClickListener {
+                val engine = engineItems[i].first
+                if (engine == currentEngine) return@setOnClickListener
+                currentEngine = engine
+                Log.i(TAG, "live: engine=$engine")
+                prefs.setEngine(engine)
+                paintEngineChips(engine)
+                fp16LosslessRow?.visibility =
+                    if (engine == FrameGenEngine.LOSSLESS_DLL) View.VISIBLE else View.GONE
+                fp16NcnnRow?.visibility =
+                    if (engine == FrameGenEngine.NCNN) View.VISIBLE else View.GONE
+                liveParamsListener?.onParamsChanged()
+            }
         }
 
         frameGenSection.addView(sectionSpacer(8))
