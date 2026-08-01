@@ -102,9 +102,10 @@ LsContext::LsContext(const Hooks::DeviceInfo& info, VkSwapchainKHR swapchain,
         Utils::getDeviceUUID(info.physicalDevice),
         conf.hdr, 1.0F / conf.flowScale, conf.multiplier - 1,
         [](const std::string& name) {
-            auto dxbc = Extract::getShader(name);
-            auto spirv = Extract::translateShader(dxbc);
-            return spirv;
+            // Lossless Scaling 3.2.2.0+ ships shaders as native SPIR-V;
+            // Extract::getShader() resolves directly to that resource, so no
+            // DXBC->SPIR-V translation step is needed anymore.
+            return Extract::getShader(name);
         }
     );
 
@@ -169,9 +170,10 @@ LsContext::LsContext(const Hooks::DeviceInfo& info, VkSwapchainKHR swapchain,
         Utils::getDeviceUUID(info.physicalDevice),
         conf.hdr, 1.0F / conf.flowScale, conf.multiplier - 1,
         [](const std::string& name) {
-            auto dxbc = Extract::getShader(name);
-            auto spirv = Extract::translateShader(dxbc);
-            return spirv;
+            // Lossless Scaling 3.2.2.0+ ships shaders as native SPIR-V;
+            // Extract::getShader() resolves directly to that resource, so no
+            // DXBC->SPIR-V translation step is needed anymore.
+            return Extract::getShader(name);
         }
     );
 

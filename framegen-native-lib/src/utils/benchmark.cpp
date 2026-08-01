@@ -43,9 +43,10 @@ void Benchmark::run(uint32_t width, uint32_t height) {
         deviceUUID, // some magic number if not given
         conf.hdr, 1.0F / conf.flowScale, conf.multiplier - 1,
         [](const std::string& name) -> std::vector<uint8_t> {
-            auto dxbc = Extract::getShader(name);
-            auto spirv = Extract::translateShader(dxbc);
-            return spirv;
+            // Lossless Scaling 3.2.2.0+ ships shaders as native SPIR-V;
+            // Extract::getShader() resolves directly to that resource, so no
+            // DXBC->SPIR-V translation step is needed anymore.
+            return Extract::getShader(name);
         }
     );
     const int32_t ctx = lsfgCreateContext(-1, -1, {},

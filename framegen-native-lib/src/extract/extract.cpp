@@ -14,60 +14,88 @@
 
 using namespace Extract;
 
-const std::unordered_map<std::string, uint32_t> nameIdxTable = {{
-    { "mipmaps", 255 },
-    { "alpha[0]", 267 },
-    { "alpha[1]", 268 },
-    { "alpha[2]", 269 },
-    { "alpha[3]", 270 },
-    { "beta[0]", 275 },
-    { "beta[1]", 276 },
-    { "beta[2]", 277 },
-    { "beta[3]", 278 },
-    { "beta[4]", 279 },
-    { "gamma[0]", 257 },
-    { "gamma[1]", 259 },
-    { "gamma[2]", 260 },
-    { "gamma[3]", 261 },
-    { "gamma[4]", 262 },
-    { "delta[0]", 257 },
-    { "delta[1]", 263 },
-    { "delta[2]", 264 },
-    { "delta[3]", 265 },
-    { "delta[4]", 266 },
-    { "delta[5]", 258 },
-    { "delta[6]", 271 },
-    { "delta[7]", 272 },
-    { "delta[8]", 273 },
-    { "delta[9]", 274 },
-    { "generate", 256 },
-    { "p_mipmaps", 255 },
-    { "p_alpha[0]", 290 },
-    { "p_alpha[1]", 291 },
-    { "p_alpha[2]", 292 },
-    { "p_alpha[3]", 293 },
-    { "p_beta[0]", 298 },
-    { "p_beta[1]", 299 },
-    { "p_beta[2]", 300 },
-    { "p_beta[3]", 301 },
-    { "p_beta[4]", 302 },
-    { "p_gamma[0]", 280 },
-    { "p_gamma[1]", 282 },
-    { "p_gamma[2]", 283 },
-    { "p_gamma[3]", 284 },
-    { "p_gamma[4]", 285 },
-    { "p_delta[0]", 280 },
-    { "p_delta[1]", 286 },
-    { "p_delta[2]", 287 },
-    { "p_delta[3]", 288 },
-    { "p_delta[4]", 289 },
-    { "p_delta[5]", 281 },
-    { "p_delta[6]", 294 },
-    { "p_delta[7]", 295 },
-    { "p_delta[8]", 296 },
-    { "p_delta[9]", 297 },
-    { "p_generate", 256 },
-}};
+namespace {
+    // Base shader ids, as they were laid out (and still are, relatively) in the
+    // legacy DXBC resource set of Lossless.dll. Lossless Scaling 3.2.2.0 embeds
+    // the *same* shaders a second time, compiled to native SPIR-V, at a shifted
+    // resource id. lsfg-vk upstream (2.0.0-dev, which added 3.2.2.0 support)
+    // derives that shifted id from this base id with a small formula instead of
+    // a second hardcoded table - see resolveResourceId() below.
+    const std::unordered_map<std::string, uint32_t> baseIdTable = {{
+        { "mipmaps", 255 },
+        { "alpha[0]", 267 },
+        { "alpha[1]", 268 },
+        { "alpha[2]", 269 },
+        { "alpha[3]", 270 },
+        { "beta[0]", 275 },
+        { "beta[1]", 276 },
+        { "beta[2]", 277 },
+        { "beta[3]", 278 },
+        { "beta[4]", 279 },
+        { "gamma[0]", 257 },
+        { "gamma[1]", 259 },
+        { "gamma[2]", 260 },
+        { "gamma[3]", 261 },
+        { "gamma[4]", 262 },
+        { "delta[0]", 257 },
+        { "delta[1]", 263 },
+        { "delta[2]", 264 },
+        { "delta[3]", 265 },
+        { "delta[4]", 266 },
+        { "delta[5]", 258 },
+        { "delta[6]", 271 },
+        { "delta[7]", 272 },
+        { "delta[8]", 273 },
+        { "delta[9]", 274 },
+        { "generate", 256 },
+    }};
+
+    // offsets used by lsfg-vk 2.0.0-dev's shader_registry.cpp to compute the
+    // SPIR-V resource id of a shader from its base id:
+    //   id' = BASE_OFFSET + id + (perf ? OFFSET_PERF : 0) + (fp16 ? 0 : OFFSET_FP32)
+    constexpr uint32_t BASE_OFFSET = 49;
+    constexpr uint32_t OFFSET_PERF = 23;
+    constexpr uint32_t OFFSET_FP32 = 49;
+
+    // Resolve a shader name (e.g. "alpha[0]" or the performance-mode
+    // "p_alpha[0]") to the SPIR-V resource id inside Lossless.dll 3.2.2.0+.
+    //
+    // We always request the fp32 (full precision) variant: picking fp16 would
+    // require negotiating VK_KHR_shader_float16_int8 / Vulkan 1.2 shaderFloat16
+    // with the hooked device first (this layer doesn't do that yet), so fp16 is
+    // left as false here - same safe default upstream falls back to when the
+    // device (or user) doesn't opt into low precision.
+    uint32_t resolveResourceId(const std::string& name) {
+        const bool perfRequested = name.rfind("p_", 0) == 0;
+        const std::string baseName = perfRequested ? name.substr(2) : name;
+
+        // mipmaps/generate are shared between the quality and performance
+        // shader sets, so they never get the performance offset applied.
+        const bool perf = perfRequested && baseName != "mipmaps" && baseName != "generate";
+
+        auto it = baseIdTable.find(baseName);
+        if (it == baseIdTable.end())
+            throw std::runtime_error("Unknown shader name: " + name);
+
+        return BASE_OFFSET + it->second + (perf ? OFFSET_PERF : 0) + OFFSET_FP32;
+    }
+
+    // full set of shader names this layer needs, used to validate that the
+    // parsed DLL actually contains everything we expect.
+    const std::vector<std::string> allShaderNames = {{
+        "mipmaps", "generate",
+        "alpha[0]", "alpha[1]", "alpha[2]", "alpha[3]",
+        "beta[0]", "beta[1]", "beta[2]", "beta[3]", "beta[4]",
+        "gamma[0]", "gamma[1]", "gamma[2]", "gamma[3]", "gamma[4]",
+        "delta[0]", "delta[1]", "delta[2]", "delta[3]", "delta[4]",
+        "delta[5]", "delta[6]", "delta[7]", "delta[8]", "delta[9]",
+        "p_alpha[0]", "p_alpha[1]", "p_alpha[2]", "p_alpha[3]",
+        "p_beta[0]", "p_beta[1]", "p_beta[2]", "p_beta[3]", "p_beta[4]",
+        "p_gamma[0]", "p_gamma[1]", "p_gamma[2]", "p_gamma[3]", "p_gamma[4]",
+        "p_delta[0]", "p_delta[1]", "p_delta[2]", "p_delta[3]", "p_delta[4]",
+        "p_delta[5]", "p_delta[6]", "p_delta[7]", "p_delta[8]", "p_delta[9]",
+    }};
+}
 
 namespace {
     auto& shaders() {
@@ -145,22 +173,24 @@ void Extract::extractShaders() {
     peparse::DestructParsedPE(dll);
 
     // ensure all shaders are present
-    for (const auto& [name, idx] : nameIdxTable)
+    for (const auto& name : allShaderNames) {
+        const uint32_t idx = resolveResourceId(name);
         if (shaders().find(idx) == shaders().end())
-            throw std::runtime_error("Shader not found: " + name + ".\n- Is Lossless Scaling up to date?");
+            throw std::runtime_error("Shader not found: " + name + ".\n- Is Lossless Scaling up to date? (LLS requires Lossless Scaling 3.2.2.0 or newer)");
+    }
 }
 
 std::vector<uint8_t> Extract::getShader(const std::string& name) {
     if (shaders().empty())
         throw std::runtime_error("Shaders are not loaded.");
 
-    auto hit = nameIdxTable.find(name);
-    if (hit == nameIdxTable.end())
-        throw std::runtime_error("Shader hash not found: " + name);
+    const uint32_t idx = resolveResourceId(name);
 
-    auto sit = shaders().find(hit->second);
+    auto sit = shaders().find(idx);
     if (sit == shaders().end())
         throw std::runtime_error("Shader not found: " + name);
 
+    // resources at this offset are native SPIR-V (Lossless Scaling 3.2.2.0+),
+    // not DXBC - no translation needed, unlike the legacy resource set.
     return sit->second;
 }
