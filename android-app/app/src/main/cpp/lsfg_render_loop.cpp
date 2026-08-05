@@ -217,9 +217,60 @@ struct State {
     };
     std::deque<PendingFrame> pending;
     std::condition_variable pendingCv;
-    bool stopRequested = false;
+    // atomic: read from presenterThread's wait predicate under presenterMu
+    // while writes happen under g.mu — plain bool would be a data race.
+    std::atomic<bool> stopRequested{false};
+
+    // ---- Shadow buffer pipeline ---------------------------------------
+    // g.inSlot[0]/[1] are the two AHardwareBuffers bound directly to the
+    // framegen context at createContextFromAHB() time — framegen alternates
+    // reading "current"/"prev" from these two fixed buffers by frameIdx
+    // parity and they cannot be swapped, only overwritten in place.
+    //
+    // Previously the capture-ingest step (workerThread) wrote new frames
+    // directly into inSlot[newSlot] and then, on the SAME thread, called
+    // presentContext + waitIdle (a cross-device GPU sync costing ~30ms) and
+    // did the paced output blits. That serialized capture ingestion behind
+    // the GPU's present/sync latency, inflating queue residency time and
+    // capture-to-display latency under any backlog.
+    //
+    // The shadow ring decouples the two: workerThread copies each capture
+    // into the next shadow slot (cheap, same-device Vulkan blit) and hands
+    // off a BlitJob. presenterThread — a separate thread — performs the
+    // (also cheap, same-device) shadow→inSlot commit blit immediately
+    // before presentContext/waitIdle, then does the paced output blits.
+    // This lets capture ingestion keep draining g.pending while the
+    // presenter is stuck in waitIdle.
+    //
+    // Ring depth of 16 (vs the 2 physical inSlot buffers) gives generous
+    // headroom for the presenter to lag behind capture during a waitIdle
+    // spike without the ring wrapping onto a shadow slot the presenter
+    // hasn't consumed yet.
+    static constexpr int kShadowRingSize = 16;
+    AhbImage shadow[kShadowRingSize]{};
+    int shadowWriteIdx = 0;  // owned exclusively by workerThread
+
+    struct BlitJob {
+        int shadowIdx = -1;   // index into g.shadow[], or -1 if skipXfer
+        bool skipXfer = false; // true only for the bootstrap frame, which
+                                // workerThread wrote directly into both
+                                // inSlot[0]/[1] before any context existed
+                                // to race against.
+        int newSlot = 0;
+        int prevSlot = 1;
+        bool suppressGeneratedFrames = false;
+        int64_t captureTimestampNs = 0;
+        Clock::time_point queuedAt{};       // == PendingFrame::queuedAt (pushFrame time)
+        Clock::time_point copyStartedAt{};  // workerThread frameWorkStartedAt
+        int64_t copyNs = 0;                 // time workerThread spent on import+copy
+    };
+    static constexpr size_t kMaxBlitJobs = 8;
+    std::deque<BlitJob> blitJobs;
+    std::condition_variable presenterCv;
+    std::mutex presenterMu;
 
     std::thread worker;
+    std::thread presenter;
     std::atomic<uint64_t> generatedFrames{0};
     // Counts every successful post (CPU blit or WSI present) to the overlay.
     // This is the ground-truth "frames on screen" metric — includes real
@@ -1859,49 +1910,11 @@ void blitOutputToWindow(const AhbImage &out, bool allowGpuPost = true) {
 }
 
 void workerThread() {
-    int64_t prevCaptureTimestampNs = 0;
-    bool havePrevCaptureTimestamp = false;
-
-    // EMA-smoothed capture interval. A single static clamp cannot serve both
-    // slow sources (2 fps gif → want ~500 ms paced) and fast sources (60 fps
-    // with noisy timestamps → must not let a spike turn into a 500 ms sleep).
-    // So we track a moving average and derive a dynamic ceiling (2× EMA). A
-    // ratio-based outlier detector skips EMA updates on spikes but still caps
-    // them to the current dynamic max; if outliers persist (genuine source
-    // regime change) we reset and re-converge.
-    double emaNs = 0.0;
-    bool emaInit = false;
-    int consecutiveOutliers = 0;
-
-    // Anti-artifact suppression hysteresis state — see
-    // updateSuppressionWithHysteresis(). Persists across loop iterations so
-    // the enter/exit streak counts actually span consecutive frames.
-    bool antiArtifactSuppressing = false;
-    int antiArtifactStreak = 0;
-
-    // ---- Frame-time profiling ------------------------------------------------
-    //
-    // Rolling accumulators over a 60-frame window. The 4 segments are:
-    //   copy     — importAhbImage + processRealFrameIntoSlot (input prep)
-    //   present  — LSFG_3_1::presentContext (framegen submit; usually <1 ms)
-    //   waitIdle — LSFG_3_1::waitIdle (cross-device sync; biggest single cost)
-    //   blit     — output blit loop (CPU memcpy + ANativeWindow_unlockAndPost,
-    //              one per generated + real frame)
-    //   total    — frameWorkStartedAt → end of blit loop
-    // pacing sleep_until() time is intentionally NOT included — that's the
-    // worker idling on purpose to honor the next vsync, not work.
-    struct ProfileAccum {
-        int64_t copyNs    = 0;
-        int64_t presentNs = 0;
-        int64_t waitIdleNs= 0;
-        int64_t blitNs    = 0;
-        int64_t totalNs   = 0;
-        int64_t queueNs   = 0;
-        int64_t captureToDisplayNs = 0;
-        uint32_t blitCount = 0;
-        uint32_t samples  = 0;
-    } prof{};
-    constexpr uint32_t kProfileWindow = 60;
+    // ---- Frame-time profiling (copy segment only) ---------------------
+    // The present/waitIdle/blit/pacing segments are now measured in
+    // presenterThread; this thread only measures import+copy time and
+    // forwards it via BlitJob::copyNs so presenterThread's log line still
+    // reports a complete picture.
 
     // Clear the overlay to fully transparent before the capture loop starts.
     // The overlay ANativeWindow retains the last posted buffer across sessions,
@@ -1930,6 +1943,15 @@ void workerThread() {
         }
     }
 
+    // Anti-artifact suppression hysteresis state — see
+    // updateSuppressionWithHysteresis(). Persists across loop iterations so
+    // the enter/exit streak counts actually span consecutive frames. This
+    // depends only on capture-order content deltas, so it stays here (in
+    // capture order) rather than moving to presenterThread (present order),
+    // which can lag behind under backlog.
+    bool antiArtifactSuppressing = false;
+    int antiArtifactStreak = 0;
+
     while (true) {
         State::PendingFrame pendingFrame{};
         {
@@ -1940,13 +1962,11 @@ void workerThread() {
             g.pending.pop_front();
         }
         const auto frameWorkStartedAt = State::Clock::now();
-        prof.queueNs += std::chrono::duration_cast<std::chrono::nanoseconds>(
-            frameWorkStartedAt - pendingFrame.queuedAt).count();
         AHardwareBuffer *ahb = pendingFrame.ahb;
         if (ahb == nullptr) continue;
 
         // Wrap the imported AHB (read-only from our perspective) and copy
-        // into the oldest input slot on-the-fly.
+        // into the next shadow ring slot on-the-fly.
         AhbImage src{};
         const int rc = importAhbImage(g.vk, ahb, src);
         if (rc != kOk) {
@@ -1962,7 +1982,14 @@ void workerThread() {
         // "current" at the upcoming present — otherwise it computes the optical
         // flow backwards (treating yesterday's frame as "now"), which collapses
         // moving objects like a head or torso.
-        const int newSlot = (g.presentsDone % 2 == 0) ? 0 : 1;
+        //
+        // This parity is now derived from g.framesCopied (this thread's own
+        // capture-order counter) rather than g.presentsDone. The two used to
+        // be equivalent because capture and present were the same serialized
+        // step; with the shadow pipeline, presenterThread can lag behind
+        // capture, so newSlot/prevSlot must be fixed at capture time and
+        // carried through the BlitJob instead of recomputed later.
+        const int newSlot = (g.framesCopied % 2 == 0) ? 0 : 1;
         const int prevSlot = 1 - newSlot;
 
         // Diagnostic helper: CPU-lock any AHB and sample a 4×4 luma grid.
@@ -2003,10 +2030,18 @@ void workerThread() {
             sampleAhb(src.ahb, lbl);
         }
 
+        bool skipXfer = false;
+        int shadowIdx = -1;
+
         // Bootstrap: the very first capture has no predecessor, so seed BOTH
         // slots with the same pixels. That makes the optical flow for the first
         // present a no-op (same image on both inputs) and the output equals the
-        // input — clean instead of ghosted.
+        // input — clean instead of ghosted. Written directly into g.inSlot[0]/[1]
+        // (bypassing the shadow ring): presenterThread hasn't started touching
+        // those buffers yet at this point in the session, so there's no race,
+        // and the framegen context needs valid content in both from the very
+        // first BlitJob (there is no "prevSlot" content yet to have been
+        // committed by a previous job).
         if (g.framesCopied == 0) {
             if (!processRealFrameIntoSlot(src, g.inSlot[0]) ||
                     !processRealFrameIntoSlot(src, g.inSlot[1])) {
@@ -2015,8 +2050,11 @@ void workerThread() {
                 AHardwareBuffer_release(ahb);
                 continue;
             }
+            skipXfer = true;
         } else {
-            if (!processRealFrameIntoSlot(src, g.inSlot[newSlot])) {
+            shadowIdx = g.shadowWriteIdx;
+            g.shadowWriteIdx = (g.shadowWriteIdx + 1) % State::kShadowRingSize;
+            if (!processRealFrameIntoSlot(src, g.shadow[shadowIdx])) {
                 LOGW("frame input processing failed");
                 destroyAhbImage(g.vk, src);
                 AHardwareBuffer_release(ahb);
@@ -2027,24 +2065,31 @@ void workerThread() {
         // Post-copy: verify the destination slot was written correctly.
         // Extended to 8 copies to capture the frame-4 failure.
         if (g.framesCopied < 8) {
-            auto sampleSlot = [&sampleAhb](int slot) {
+            auto sampleShadow = [&sampleAhb](const AhbImage &img, int slot) {
                 char lbl[32];
                 std::snprintf(lbl, sizeof(lbl), "post_copy slot%d", slot);
-                sampleAhb(g.inSlot[slot].ahb, lbl);
+                sampleAhb(img.ahb, lbl);
             };
             if (g.framesCopied == 0) {
-                sampleSlot(0);
-                sampleSlot(1);
+                sampleShadow(g.inSlot[0], 0);
+                sampleShadow(g.inSlot[1], 1);
             } else {
-                sampleSlot(newSlot);
+                sampleShadow(g.shadow[shadowIdx], newSlot);
             }
         }
 
         g.framesCopied++;
         bool suppressGeneratedFrames = false;
         if (g.antiArtifacts.load(std::memory_order_relaxed) && g.framesCopied > 1) {
+            // Note: g.inSlot[prevSlot] here reflects whatever presenterThread
+            // last committed there, which — under a healthy (non-backlogged)
+            // pipeline — is the immediately preceding capture, same as before.
+            // Under sustained backlog it may lag by a job or two; the
+            // anti-artifact heuristic degrades gracefully (it just compares
+            // against slightly older content) rather than breaking.
+            const AhbImage &newContent = skipXfer ? g.inSlot[newSlot] : g.shadow[shadowIdx];
             const FrameDeltaMetrics metrics =
-                computeFrameDeltaMetrics(g.inSlot[prevSlot], g.inSlot[newSlot]);
+                computeFrameDeltaMetrics(g.inSlot[prevSlot], newContent);
             const int intensity = g.antiArtifactsIntensity.load(std::memory_order_relaxed);
             const bool unreliable = frameLooksUnreliableForFlow(metrics, intensity);
             suppressGeneratedFrames = updateSuppressionWithHysteresis(
@@ -2056,6 +2101,117 @@ void workerThread() {
 
         // PROFILE: input copy phase done.
         const auto tCopyDone = State::Clock::now();
+        const int64_t copyNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            tCopyDone - frameWorkStartedAt).count();
+
+        State::BlitJob job{};
+        job.shadowIdx = shadowIdx;
+        job.skipXfer = skipXfer;
+        job.newSlot = newSlot;
+        job.prevSlot = prevSlot;
+        job.suppressGeneratedFrames = suppressGeneratedFrames;
+        job.captureTimestampNs = pendingFrame.captureTimestampNs;
+        job.queuedAt = pendingFrame.queuedAt;
+        job.copyStartedAt = frameWorkStartedAt;
+        job.copyNs = copyNs;
+
+        {
+            std::unique_lock<std::mutex> lock(g.presenterMu);
+            if (g.blitJobs.size() >= State::kMaxBlitJobs) {
+                // Presenter is badly backlogged (e.g. a long waitIdle stall).
+                // Drop the oldest queued job rather than blocking capture
+                // ingestion — this mirrors the existing drop-oldest policy on
+                // g.pending. The dropped job's shadow slot is simply never
+                // committed; presenterThread will pair the next surviving job
+                // against whatever is currently in inSlot[prevSlot] (one
+                // cycle stale), which is a graceful degrade rather than a
+                // desync, since every job carries its own precomputed
+                // newSlot/prevSlot.
+                g.blitJobs.pop_front();
+            }
+            g.blitJobs.push_back(job);
+        }
+        g.presenterCv.notify_one();
+
+        // Loop back immediately to drain the next pending capture — no
+        // waiting on presentContext/waitIdle/blit/pacing here anymore.
+    }
+}
+
+void presenterThread() {
+    int64_t prevCaptureTimestampNs = 0;
+    bool havePrevCaptureTimestamp = false;
+
+    // EMA-smoothed capture interval. A single static clamp cannot serve both
+    // slow sources (2 fps gif → want ~500 ms paced) and fast sources (60 fps
+    // with noisy timestamps → must not let a spike turn into a 500 ms sleep).
+    // So we track a moving average and derive a dynamic ceiling (2× EMA). A
+    // ratio-based outlier detector skips EMA updates on spikes but still caps
+    // them to the current dynamic max; if outliers persist (genuine source
+    // regime change) we reset and re-converge.
+    double emaNs = 0.0;
+    bool emaInit = false;
+    int consecutiveOutliers = 0;
+
+    // ---- Frame-time profiling ------------------------------------------------
+    //
+    // Rolling accumulators over a 60-frame window. The segments are:
+    //   copy     — importAhbImage + processRealFrameIntoSlot on workerThread
+    //              (input prep; forwarded via BlitJob::copyNs)
+    //   xfer     — shadow ring → inSlot[newSlot] commit blit (same-device,
+    //              cheap; this is the new step the shadow pipeline adds)
+    //   present  — LSFG_3_1::presentContext (framegen submit; usually <1 ms)
+    //   waitIdle — LSFG_3_1::waitIdle (cross-device sync; biggest single cost)
+    //   blit     — output blit loop (CPU memcpy + ANativeWindow_unlockAndPost,
+    //              one per generated + real frame)
+    //   total    — job dequeue → end of blit loop
+    //   queue    — pushFrame() enqueue time → this thread picking up the job
+    //              (now spans capture-copy + any presenter backlog, so it
+    //              reflects total pre-presentation pipeline latency)
+    // pacing sleep_until() time is intentionally NOT included in blit/total —
+    // that's the thread idling on purpose to honor the next vsync, not work.
+    struct ProfileAccum {
+        int64_t copyNs    = 0;
+        int64_t xferNs    = 0;
+        int64_t presentNs = 0;
+        int64_t waitIdleNs= 0;
+        int64_t blitNs    = 0;
+        int64_t totalNs   = 0;
+        int64_t queueNs   = 0;
+        int64_t captureToDisplayNs = 0;
+        uint32_t blitCount = 0;
+        uint32_t samples  = 0;
+    } prof{};
+    constexpr uint32_t kProfileWindow = 60;
+
+    while (true) {
+        State::BlitJob job{};
+        {
+            std::unique_lock<std::mutex> lock(g.presenterMu);
+            g.presenterCv.wait(lock, []{ return g.stopRequested || !g.blitJobs.empty(); });
+            if (g.stopRequested && g.blitJobs.empty()) return;
+            job = g.blitJobs.front();
+            g.blitJobs.pop_front();
+        }
+        const auto tJobStart = State::Clock::now();
+        prof.queueNs += std::chrono::duration_cast<std::chrono::nanoseconds>(
+            tJobStart - job.queuedAt).count();
+
+        // Commit step: copy the shadow-buffered capture into the fixed
+        // inSlot the framegen context is bound to. Same-device Vulkan blit —
+        // cheap relative to the cross-device waitIdle below. Skipped for the
+        // bootstrap job, which workerThread already wrote directly.
+        const auto tXferStart = State::Clock::now();
+        if (!job.skipXfer && job.shadowIdx >= 0) {
+            if (!copyAhbImage(g.shadow[job.shadowIdx], g.inSlot[job.newSlot])) {
+                LOGW("presenterThread: shadow->inSlot commit blit failed (slot=%d)", job.newSlot);
+                continue;
+            }
+        }
+        const auto tXferDone = State::Clock::now();
+
+        const int newSlot = job.newSlot;
+        const bool suppressGeneratedFrames = job.suppressGeneratedFrames;
 
         const bool runFramegen = g.framegenCtxId >= 0
                                  && !g.bypass.load(std::memory_order_relaxed)
@@ -2090,10 +2246,13 @@ void workerThread() {
             // still pending on framegen's queue).
             const auto tPresentDone = State::Clock::now();
             // Wait for framegen's GPU work to actually finish before we (a)
-            // overwrite the input AHB on the next pushFrame and (b) read the
-            // output AHB for the blit. Framegen and our session use different
-            // VkDevices, so vkDeviceWaitIdle on either is necessary — without
-            // an explicit shared semaphore this is the only correct sync.
+            // let workerThread reuse this shadow slot / overwrite inSlot on a
+            // future commit and (b) read the output AHB for the blit.
+            // Framegen and our session use different VkDevices, so
+            // vkDeviceWaitIdle on either is necessary — without an explicit
+            // shared semaphore this is the only correct sync. This call —
+            // the single biggest cost in the pipeline — now blocks only this
+            // thread; workerThread keeps draining captures concurrently.
             if (g.performanceMode) LSFG_3_1P::waitIdle();
             else                   LSFG_3_1::waitIdle();
             // PROFILE: cross-device sync complete; outputs ready to read.
@@ -2111,7 +2270,7 @@ void workerThread() {
             // calls — excludes pacing sleep_until() time, which is idle, not
             // work. Reset each iteration; consumed by the profile logger below.
             int64_t blitWorkNsThisFrame = 0;
-            auto timedBlit = [&blitWorkNsThisFrame, &pendingFrame, &prof](const AhbImage &out) {
+            auto timedBlit = [&blitWorkNsThisFrame, &job, &prof](const AhbImage &out) {
                 const auto t0 = State::Clock::now();
                 blitOutputToWindow(out);
                 const auto t1 = State::Clock::now();
@@ -2120,8 +2279,8 @@ void workerThread() {
 
                 const uint64_t postTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                     t1.time_since_epoch()).count();
-                if (postTimeNs > pendingFrame.captureTimestampNs) {
-                    prof.captureToDisplayNs += (postTimeNs - pendingFrame.captureTimestampNs);
+                if (postTimeNs > static_cast<uint64_t>(job.captureTimestampNs)) {
+                    prof.captureToDisplayNs += (postTimeNs - job.captureTimestampNs);
                 }
                 prof.blitCount++;
             };
@@ -2131,13 +2290,13 @@ void workerThread() {
             const bool haveShizukuCadence =
                 shizuku.enabled &&
                 shizuku.frameTimeNs > 0 &&
-                shizuku.timestampNs >= pendingFrame.captureTimestampNs;
+                shizuku.timestampNs >= job.captureTimestampNs;
             const bool haveCaptureDelta =
                 havePrevCaptureTimestamp &&
-                pendingFrame.captureTimestampNs > prevCaptureTimestampNs;
+                job.captureTimestampNs > prevCaptureTimestampNs;
             if (haveShizukuCadence || haveCaptureDelta) {
                 // Hard floor (125 Hz) and absolute ceiling (1 Hz). The ceiling
-                // prevents the worker from sleeping for many seconds if the
+                // prevents this thread from sleeping for many seconds if the
                 // source genuinely runs slower than 1 fps — at that point pacing
                 // stops being useful and reactivity matters more.
                 constexpr double minNs = 8.0  * 1'000'000.0;  // 125 Hz
@@ -2156,7 +2315,7 @@ void workerThread() {
                 double rawNs;
                 if (haveCaptureDelta) {
                     rawNs = static_cast<double>(
-                        pendingFrame.captureTimestampNs - prevCaptureTimestampNs);
+                        job.captureTimestampNs - prevCaptureTimestampNs);
                 } else {
                     rawNs = static_cast<double>(shizuku.frameTimeNs);
                 }
@@ -2228,12 +2387,12 @@ void workerThread() {
 
                 captureInterval = std::chrono::nanoseconds(
                     static_cast<int64_t>(rawNs));
-            } else if (pendingFrame.captureTimestampNs <= 0) {
+            } else if (job.captureTimestampNs <= 0) {
                 // Fallback for sources that don't provide a valid presentation timestamp.
                 captureInterval = std::chrono::milliseconds(16);
             }
-            prevCaptureTimestampNs = pendingFrame.captureTimestampNs;
-            havePrevCaptureTimestamp = pendingFrame.captureTimestampNs > 0;
+            prevCaptureTimestampNs = job.captureTimestampNs;
+            havePrevCaptureTimestamp = job.captureTimestampNs > 0;
 
             if (suppressGeneratedFrames) {
                 // Very large inter-frame changes make LSFG's occlusion/flow mask
@@ -2245,11 +2404,12 @@ void workerThread() {
                 // Pacing strategy differs by regime:
                 //
                 // Fast sources (30+ fps): compute takes a large fraction of the
-                // capture interval, so we need to return to the worker loop
-                // promptly. Sleep only between generated frames using what's left
-                // of the budget, then blit the real frame immediately. Trying to
-                // hold the real frame for its "fair slot" here overflows the
-                // pending queue (cap=4) and causes dropped frames / stutter.
+                // capture interval, so we need to return to the top of this
+                // loop promptly. Sleep only between generated frames using
+                // what's left of the budget, then blit the real frame
+                // immediately. Trying to hold the real frame for its "fair
+                // slot" here overflows the job queue and causes dropped
+                // frames / stutter.
                 //
                 // Slow sources (e.g. 2 fps gif): compute is negligible vs the
                 // interval, so without a hold after the last generated frame, the
@@ -2257,11 +2417,11 @@ void workerThread() {
                 // (hundreds of ms) while the generated frames flash by in the
                 // first ms. Here we DO want the hold.
                 //
-                // Heuristic: if another frame is already queued, we're in the
+                // Heuristic: if another job is already queued, we're in the
                 // fast regime (backlog exists) — skip the hold. Otherwise we have
                 // idle time and should pace the real frame too.
                 const auto now = State::Clock::now();
-                auto remainingBudget = captureInterval - (now - frameWorkStartedAt);
+                auto remainingBudget = captureInterval - (now - tJobStart);
                 if (remainingBudget < State::Clock::duration::zero()) {
                     remainingBudget = State::Clock::duration::zero();
                 }
@@ -2303,32 +2463,35 @@ void workerThread() {
             if (!suppressGeneratedFrames) {
                 g.generatedFrames.fetch_add(g.outputs.size(), std::memory_order_relaxed);
             }
-            g.presentsDone++;  // keep our slot indexing in sync with framegen's frameIdx
+            g.presentsDone++;
 
             // PROFILE: accumulate this frame's segments and emit a summary
             // every kProfileWindow frames. Numbers reported are AVERAGES over
             // the window. `blitWork` excludes pacing sleep_until() time so it
             // reflects only the actual blit cost; `wallEnd` is the full
-            // worker iteration including any pacing sleep.
+            // presenter iteration including any pacing sleep.
             const auto tFrameEnd = State::Clock::now();
             using ns = std::chrono::nanoseconds;
-            prof.copyNs     += std::chrono::duration_cast<ns>(tCopyDone     - frameWorkStartedAt).count();
-            prof.presentNs  += std::chrono::duration_cast<ns>(tPresentDone  - tCopyDone).count();
+            prof.copyNs     += job.copyNs;
+            prof.xferNs     += std::chrono::duration_cast<ns>(tXferDone     - tXferStart).count();
+            prof.presentNs  += std::chrono::duration_cast<ns>(tPresentDone  - tXferDone).count();
             prof.waitIdleNs += std::chrono::duration_cast<ns>(tWaitIdleDone - tPresentDone).count();
             prof.blitNs     += blitWorkNsThisFrame;
-            prof.totalNs    += std::chrono::duration_cast<ns>(tFrameEnd - frameWorkStartedAt).count();
+            prof.totalNs    += std::chrono::duration_cast<ns>(tFrameEnd - tJobStart).count();
             prof.samples++;
             if (prof.samples >= kProfileWindow) {
                 const double n = static_cast<double>(prof.samples);
                 const double avgWaitIdleMs = (prof.waitIdleNs / n) / 1'000'000.0;
                 const double avgWallEndMs  = (prof.totalNs    / n) / 1'000'000.0;
                 const double avgQueueMs    = (prof.queueNs    / n) / 1'000'000.0;
+                const double avgXferMs     = (prof.xferNs     / n) / 1'000'000.0;
                 const double avgLatencyMs  = prof.blitCount > 0 ? (prof.captureToDisplayNs / static_cast<double>(prof.blitCount)) / 1'000'000.0 : 0.0;
                 const uint64_t hits = g.cacheHits.exchange(0, std::memory_order_relaxed);
                 const uint64_t misses = g.cacheMisses.exchange(0, std::memory_order_relaxed);
-                LOGW("frame profile (avg over %u): copy=%.2fms present=%.2fms waitIdle=%.2fms blitWork=%.2fms wallEnd=%.2fms queue=%.2fms latency=%.2fms cache_hits=%llu cache_misses=%llu (mult=%d)",
+                LOGW("frame profile (avg over %u): copy=%.2fms xfer=%.2fms present=%.2fms waitIdle=%.2fms blitWork=%.2fms wallEnd=%.2fms queue=%.2fms latency=%.2fms cache_hits=%llu cache_misses=%llu (mult=%d)",
                      prof.samples,
                      (prof.copyNs / n)     / 1'000'000.0,
+                     avgXferMs,
                      (prof.presentNs / n)  / 1'000'000.0,
                      avgWaitIdleMs,
                      (prof.blitNs / n)     / 1'000'000.0,
@@ -2359,8 +2522,6 @@ void workerThread() {
             // increment generatedFrames here.
             blitOutputToWindow(g.inSlot[newSlot]);
         }
-
-
     }
 }
 
@@ -2552,6 +2713,19 @@ int initRenderLoop(const char *cacheDir, const RenderLoopConfig &cfg) {
         }
         initInSlotImageLayout(g.inSlot[i].image);
     }
+    // Shadow ring buffer: allocated at the same size/format as inSlot so
+    // workerThread can copy captures into them without touching the two
+    // buffers actually bound to the framegen context (see BlitJob comment).
+    g.shadowWriteIdx = 0;
+    for (int i = 0; i < State::kShadowRingSize; ++i) {
+        rc = createAhbImage(g.vk, renderW, renderH, fmt, g.shadow[i]);
+        if (rc != kOk) {
+            LOGE("createAhbImage(shadow %d) failed rc=%d", i, rc);
+            shutdownRenderLoop();
+            return kRenderLoopBufferAlloc;
+        }
+        initInSlotImageLayout(g.shadow[i].image);
+    }
     // Number of outputs = generationCount, matching framegen "level".
     g.outputs.resize(g.multiplier);
     for (int i = 0; i < g.multiplier; ++i) {
@@ -2579,6 +2753,7 @@ int initRenderLoop(const char *cacheDir, const RenderLoopConfig &cfg) {
 
     g.stopRequested = false;
     g.worker = std::thread(workerThread);
+    g.presenter = std::thread(presenterThread);
     // Do NOT build the swapchain here. At initContext time the overlay's
     // Surface is still owned by the mirror VirtualDisplay producer — it's
     // only detached when setLsfgMode() runs (which retargets the VD to the
@@ -2706,6 +2881,17 @@ void shutdownRenderLoop() {
     g.pendingCv.notify_all();
     if (g.worker.joinable()) g.worker.join();
 
+    // workerThread is joined (guaranteed to push no more jobs), so it's now
+    // safe to drain presenterThread. Wake it and join before touching any
+    // shared Vulkan resources it reads (inSlot, shadow, outputs, ...).
+    g.presenterCv.notify_all();
+    if (g.presenter.joinable()) g.presenter.join();
+
+    {
+        std::lock_guard<std::mutex> presenterLock(g.presenterMu);
+        g.blitJobs.clear();
+    }
+
     {
         std::lock_guard<std::mutex> lock(g.mu);
         for (const auto &pendingFrame : g.pending) AHardwareBuffer_release(pendingFrame.ahb);
@@ -2731,6 +2917,7 @@ void shutdownRenderLoop() {
         g.gpuPost.reset(g.vk);
         destroyAhbImage(g.vk, g.gpuPostImage);
         for (int i = 0; i < 2; ++i) destroyAhbImage(g.vk, g.inSlot[i]);
+        for (int i = 0; i < State::kShadowRingSize; ++i) destroyAhbImage(g.vk, g.shadow[i]);
 
 
 
