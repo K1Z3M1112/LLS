@@ -65,7 +65,27 @@ object NativeBridge {
         performance: Boolean,
         hdr: Boolean,
         antiArtifacts: Boolean,
+        antiArtifactsIntensity: Int,
         framegenFp16: Boolean,
+        npuPostProcessing: Boolean,
+        npuPreset: Int,
+        npuUpscaleFactor: Int,
+        npuAmount: Float,
+        npuRadius: Float,
+        npuThreshold: Float,
+        npuFp16: Boolean,
+        cpuPostProcessing: Boolean,
+        cpuPreset: Int,
+        cpuStrength: Float,
+        cpuSaturation: Float,
+        cpuVibrance: Float,
+        cpuVignette: Float,
+        gpuPostProcessing: Boolean,
+        gpuStage: Int,
+        gpuMethod: Int,
+        gpuUpscaleFactor: Float,
+        gpuSharpness: Float,
+        gpuStrength: Float,
         targetFpsCap: Int,
         emaAlpha: Float,
         outlierRatio: Float,
@@ -171,6 +191,16 @@ object NativeBridge {
 
     /** Enables the native high-motion artifact suppression guard. */
     external fun setAntiArtifacts(enabled: Boolean)
+
+    /**
+     * Hot-applies the anti-artifact detection sensitivity, 1..100. 50 is the
+     * neutral/default value; higher suppresses generated frames more
+     * readily (fewer visible artifacts, more drops to real frame rate),
+     * lower suppresses less (smoother frame count, more risk of visible
+     * optical-flow artifacts on fast motion). Only has an effect while
+     * [setAntiArtifacts] is enabled.
+     */
+    external fun setAntiArtifactsIntensity(intensity: Int)
 
     /**
      * Reports the overlay display's vsync period to the native pacing loop

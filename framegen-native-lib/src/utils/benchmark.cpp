@@ -43,8 +43,8 @@ void Benchmark::run(uint32_t width, uint32_t height) {
         deviceUUID, // some magic number if not given
         conf.hdr, 1.0F / conf.flowScale, conf.multiplier - 1,
         [](const std::string& name) -> std::vector<uint8_t> {
-            auto dxbc = Extract::getShader(name);
-            auto spirv = Extract::translateShader(dxbc);
+            auto bytecode = Extract::getShader(name);
+            auto spirv = Extract::translateShader(bytecode);
             return spirv;
         }
     );

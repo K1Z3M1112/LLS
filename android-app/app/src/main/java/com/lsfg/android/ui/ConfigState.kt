@@ -2,8 +2,12 @@ package com.lsfg.android.ui
 
 import com.lsfg.android.prefs.LsfgConfig
 import com.lsfg.android.prefs.CaptureSource
+import com.lsfg.android.prefs.CpuPostProcessingPreset
 import com.lsfg.android.prefs.DrawerEdge
+import com.lsfg.android.prefs.GpuPostProcessingMethod
+import com.lsfg.android.prefs.GpuPostProcessingStage
 import com.lsfg.android.prefs.LsfgPreferences
+import com.lsfg.android.prefs.NpuPostProcessingPreset
 import com.lsfg.android.prefs.OverlayMode
 import com.lsfg.android.prefs.PacingDefaults
 import com.lsfg.android.prefs.PacingPreset
@@ -28,6 +32,7 @@ private val shared: MutableStateFlow<LsfgConfig> = MutableStateFlow(
         performanceMode = true,
         hdrMode = false,
         antiArtifacts = false,
+        antiArtifactsIntensity = 50,
         framegenFp16 = false,
         targetPackage = null,
         captureSource = CaptureSource.MEDIA_PROJECTION,
@@ -37,6 +42,25 @@ private val shared: MutableStateFlow<LsfgConfig> = MutableStateFlow(
         frameGraphEnabled = false,
         drawerEdge = DrawerEdge.RIGHT,
         overlayMode = OverlayMode.ICON_BUTTON,
+        npuPostProcessingEnabled = false,
+        npuPostProcessingPreset = NpuPostProcessingPreset.OFF,
+        npuUpscaleFactor = 1,
+        npuAmount = 0.5f,
+        npuRadius = 1.0f,
+        npuThreshold = 0.0f,
+        npuFp16 = true,
+        cpuPostProcessingEnabled = false,
+        cpuPostProcessingPreset = CpuPostProcessingPreset.OFF,
+        cpuStrength = 0.5f,
+        cpuSaturation = 0.5f,
+        cpuVibrance = 0.0f,
+        cpuVignette = 0.0f,
+        gpuPostProcessingEnabled = false,
+        gpuPostProcessingStage = GpuPostProcessingStage.AFTER_LSFG,
+        gpuPostProcessingMethod = GpuPostProcessingMethod.FSR1_EASU_RCAS,
+        gpuUpscaleFactor = 1.0f,
+        gpuSharpness = 0.5f,
+        gpuStrength = 0.5f,
         pacingPreset = PacingPreset.BALANCED,
         vsyncAlignmentEnabled = PacingDefaults.VSYNC_ALIGNMENT,
         vsyncRefreshOverride = VsyncRefreshOverride.AUTO,

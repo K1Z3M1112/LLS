@@ -1,10 +1,10 @@
 // Minimal Vulkan smoke test for the cached SPIR-V blobs.
 //
-// Phase 4 only validates that every shader the DXBC→SPIR-V translator produced
-// is accepted by the device driver via vkCreateShaderModule. That is a
-// surprisingly powerful end-to-end check — it catches bad headers, invalid
-// magic numbers, unsupported decorations, and any Vulkan version mismatch
-// between how the shader was translated and what the device actually speaks.
+// Phase 4 only validates that every native FP32 SPIR-V shader extracted from
+// Lossless.dll is accepted by the device driver via vkCreateShaderModule.
+// That is a surprisingly powerful end-to-end check — it catches bad headers,
+// invalid magic numbers, unsupported decorations, and any Vulkan version
+// mismatch between the shader and what the device actually speaks.
 //
 // Full pipeline creation (create/present/delete context) lives in later
 // phases, once we also have MediaProjection-sourced VkImages to feed it.
@@ -32,7 +32,10 @@ namespace lsfg_android {
 
 namespace {
 
-constexpr uint32_t kAllResourceIds[] = {
+// Base resource ids (255..302). The FP32 SPIR-V cache actually on disk lives
+// at base + 98 (353..400) — see kFp32SpirvIdOffset in android_shader_loader.cpp.
+constexpr uint32_t kFp32SpirvIdOffset = 98;
+constexpr uint32_t kBaseResourceIds[] = {
     255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266,
     267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279,
     280, 281, 282, 283, 284, 285, 286, 287, 288, 289,
@@ -148,8 +151,9 @@ int probe_shaders_on_device(const std::string &cacheDir) {
 
     int loaded = 0;
     int rejected = 0;
-    for (uint32_t id : kAllResourceIds) {
-        auto spirv = load_cached_spirv(cacheDir, id);
+    for (uint32_t baseId : kBaseResourceIds) {
+        const uint32_t id = baseId + kFp32SpirvIdOffset;
+        auto spirv = load_cached_spirv(cacheDir, id, ShaderCache::Fp32Spirv);
         if (spirv.empty() || (spirv.size() % 4) != 0) {
             LOGE("SPIR-V resource %u missing or malformed (%zu bytes)", id, spirv.size());
             destroy(vk);
@@ -242,7 +246,7 @@ bool device_supports_vulkan_memory_model() {
     // VulkanMemoryModel is core-promoted in 1.2 (queryable via
     // VkPhysicalDeviceVulkan12Features); on 1.1 it's gated by
     // VK_KHR_vulkan_memory_model. We accept either signal — both gate the same
-    // OpCapability VulkanMemoryModel that the bundled DXBC translator emits.
+    // OpCapability VulkanMemoryModel some SPIR-V shader variants may require.
     if (volkInitialize() != VK_SUCCESS) {
         return false;
     }

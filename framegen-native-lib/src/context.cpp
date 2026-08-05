@@ -102,8 +102,8 @@ LsContext::LsContext(const Hooks::DeviceInfo& info, VkSwapchainKHR swapchain,
         Utils::getDeviceUUID(info.physicalDevice),
         conf.hdr, 1.0F / conf.flowScale, conf.multiplier - 1,
         [](const std::string& name) {
-            auto dxbc = Extract::getShader(name);
-            auto spirv = Extract::translateShader(dxbc);
+            auto bytecode = Extract::getShader(name);
+            auto spirv = Extract::translateShader(bytecode);
             return spirv;
         }
     );
@@ -169,8 +169,8 @@ LsContext::LsContext(const Hooks::DeviceInfo& info, VkSwapchainKHR swapchain,
         Utils::getDeviceUUID(info.physicalDevice),
         conf.hdr, 1.0F / conf.flowScale, conf.multiplier - 1,
         [](const std::string& name) {
-            auto dxbc = Extract::getShader(name);
-            auto spirv = Extract::translateShader(dxbc);
+            auto bytecode = Extract::getShader(name);
+            auto spirv = Extract::translateShader(bytecode);
             return spirv;
         }
     );

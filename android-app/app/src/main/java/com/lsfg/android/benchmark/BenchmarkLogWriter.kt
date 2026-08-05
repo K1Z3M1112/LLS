@@ -39,7 +39,7 @@ object BenchmarkLogWriter {
         renderHeight: Int,
     ): String {
         val sb = StringBuilder(8192)
-        sb.appendLine("DeepFG Benchmark Report")
+        sb.appendLine("LSFG-Android Benchmark Report")
         sb.appendLine("=============================")
         sb.appendLine()
 
@@ -151,7 +151,7 @@ object BenchmarkLogWriter {
         val uri = FileProvider.getUriForFile(ctx, authority, file)
         return Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "DeepFG benchmark — ${file.nameWithoutExtension}")
+            putExtra(Intent.EXTRA_SUBJECT, "LSFG-Android benchmark — ${file.nameWithoutExtension}")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }

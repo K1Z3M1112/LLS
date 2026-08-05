@@ -2,18 +2,14 @@
 //
 // On Linux the DLL path is discovered from Steam install locations. On Android
 // the user picks the file via SAF and Kotlin copies it to a local path under
-// the app's filesDir before calling into native. This file only implements
-// the PE parsing + DXBC→SPIR-V translation and caches one .spv per resource
-// ID into a caller-chosen cache directory.
+// the app's filesDir before calling into native. Lossless.dll 3.2.2+ ships
+// every framegen shader as native SPIR-V (FP16 + FP32 variants), so this file
+// only implements the PE parsing + passthrough caching of those resources —
+// there is no DXBC bytecode and no translation step.
 
 #include "android_shader_loader.hpp"
 
 #include <pe-parse/parse.h>
-
-#include <dxbc_modinfo.h>
-#include <dxbc_module.h>
-#include <dxbc_reader.h>
-#include <thirdparty/spirv.hpp>
 
 #include <android/log.h>
 
@@ -54,7 +50,7 @@ constexpr uint32_t kFp16IdOffset = 49;
 // FP32 SPIR-V variants live as RCDATA at DXBC_id + 98 (range 353..400).
 // Same shaders, no Float16 capability, MemoryModel Logical GLSL450 (no
 // VulkanMemoryModel) — verified in _analysis/fp32/ via dump_fp32_spv.py.
-// Preferred over the DXBC translator path on devices without vulkanMemoryModel.
+// The default shader source, since it needs no vulkanMemoryModel support.
 constexpr uint32_t kFp32SpirvIdOffset = 98;
 
 // SPIR-V LE magic word (0x07230203). Used to validate FP16 blobs before
@@ -78,17 +74,10 @@ int on_resource(void *userData, const peparse::resource &res) {
     return 0;
 }
 
-struct BindingOffsets {
-    uint32_t bindingIndex{};
-    uint32_t bindingOffset{};
-    uint32_t setIndex{};
-    uint32_t setOffset{};
-};
-
 // SPIR-V header layout: [magic][version][generator][bound][schema]
-// Vulkan 1.1 supports up to SPIR-V 1.3 (0x00010300). The dxvk compiler
-// targets SPIR-V 1.6 which Mali rejects at JIT compilation time. Patch the
-// version word down so the driver accepts the bytecode.
+// Vulkan 1.1 supports up to SPIR-V 1.3 (0x00010300). Some precompiled blobs
+// target a newer SPIR-V version that Mali rejects at JIT compilation time.
+// Patch the version word down so the driver accepts the bytecode.
 void cap_spirv_version(std::vector<uint8_t> &spirv) {
     if (spirv.size() < 20) return;
     uint32_t ver;
@@ -109,9 +98,7 @@ void cap_spirv_version(std::vector<uint8_t> &spirv) {
 //   { 1, UNIFORM_BUFFER }, { 1, SAMPLER }, { 1, SAMPLED_IMAGE }, { 7, STORAGE_IMAGE }
 // and ShaderModule fills `binding = 0..N-1` over that flattened sequence.
 //
-// The DXBC→SPIR-V translator path (translate_dxbc_to_spirv) gets this for
-// free because DXVK happens to emit OpDecorate Binding decorations in the
-// matching order. The FP16 path consumes precompiled SPIR-V straight from
+// The FP16/FP32 paths consume precompiled SPIR-V straight from
 // Lossless.dll where the bindings are HLSL register slots and the
 // OpDecorate ordering is `sampler, sampled_image, storage_image..., cb`
 // (cb last) — flattened in declaration order this puts the uniform buffer
@@ -259,53 +246,6 @@ bool rewrite_spirv_bindings_dense(std::vector<uint8_t> &spirv) {
     return true;
 }
 
-std::vector<uint8_t> translate_dxbc_to_spirv(const std::vector<uint8_t> &bytecode) {
-    dxvk::DxbcReader reader(reinterpret_cast<const char *>(bytecode.data()), bytecode.size());
-    dxvk::DxbcModule module(reader);
-    const dxvk::DxbcModuleInfo info{};
-    auto code = module.compile(info, "CS");
-
-    std::vector<BindingOffsets> bindingOffsets;
-    std::vector<uint32_t> varIds;
-    for (auto ins : code) {
-        if (ins.opCode() == spv::OpDecorate) {
-            if (ins.arg(2) == spv::DecorationBinding) {
-                const uint32_t varId = ins.arg(1);
-                bindingOffsets.resize(std::max(bindingOffsets.size(), size_t(varId + 1)));
-                bindingOffsets[varId].bindingIndex = ins.arg(3);
-                bindingOffsets[varId].bindingOffset = ins.offset() + 3;
-                varIds.push_back(varId);
-            }
-            if (ins.arg(2) == spv::DecorationDescriptorSet) {
-                const uint32_t varId = ins.arg(1);
-                bindingOffsets.resize(std::max(bindingOffsets.size(), size_t(varId + 1)));
-                bindingOffsets[varId].setIndex = ins.arg(3);
-                bindingOffsets[varId].setOffset = ins.offset() + 3;
-            }
-        }
-        if (ins.opCode() == spv::OpFunction) {
-            break;
-        }
-    }
-
-    std::vector<BindingOffsets> validBindings;
-    for (const auto varId : varIds) {
-        const auto info = bindingOffsets[varId];
-        if (info.bindingOffset) {
-            validBindings.push_back(info);
-        }
-    }
-
-    for (size_t i = 0; i < validBindings.size(); ++i) {
-        code.data()[validBindings[i].bindingOffset] = static_cast<uint8_t>(i);
-    }
-
-    std::vector<uint8_t> spirv(code.size());
-    std::copy_n(reinterpret_cast<const uint8_t *>(code.data()), code.size(), spirv.data());
-    cap_spirv_version(spirv);
-    return spirv;
-}
-
 bool write_file(const std::string &path, const std::vector<uint8_t> &data) {
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f) {
@@ -331,39 +271,16 @@ int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir
     peparse::IterRsrc(dll, on_resource, &ctx);
     peparse::DestructParsedPE(dll);
 
-    // Ensure every DXBC resource we depend on is present.
-    for (uint32_t id : kResourceIds) {
-        if (blobsByResId.find(id) == blobsByResId.end()) {
-            LOGE("Missing resource id %u — is Lossless Scaling up to date?", id);
+    // Lossless.dll 3.2.2+ ships every framegen shader as native SPIR-V — no
+    // DXBC bytecode, no translation step. Require the FP32 SPIR-V set (the
+    // default path) to be present; the FP16 set below is best-effort.
+    for (uint32_t dxbcId : kResourceIds) {
+        const uint32_t fp32Id = dxbcId + kFp32SpirvIdOffset;
+        if (blobsByResId.find(fp32Id) == blobsByResId.end()) {
+            LOGE("Missing native SPIR-V resource id %u — is Lossless Scaling 3.2.2+ installed?", fp32Id);
             return kErrMissingResource;
         }
     }
-
-    int translated = 0;
-    for (uint32_t resId : kResourceIds) {
-        const auto &dxbc = blobsByResId.at(resId);
-        std::vector<uint8_t> spirv;
-        try {
-            spirv = translate_dxbc_to_spirv(dxbc);
-        } catch (const std::exception &e) {
-            LOGE("DXBC→SPIR-V failed for resource %u: %s", resId, e.what());
-            return kErrTranslationFailed;
-        }
-        if (spirv.empty()) {
-            LOGE("Empty SPIR-V for resource %u", resId);
-            return kErrTranslationFailed;
-        }
-
-        char path[512];
-        std::snprintf(path, sizeof(path), "%s/%u.spv", cacheDir.c_str(), resId);
-        if (!write_file(path, spirv)) {
-            LOGE("Failed to write %s", path);
-            return kErrWriteFailed;
-        }
-        ++translated;
-    }
-
-    LOGI("Translated %d DXBC shaders into %s", translated, cacheDir.c_str());
 
     // FP16 SPIR-V variants: precompiled in the DLL at DXBC_id + 49. Cache them
     // verbatim into <cacheDir>/fp16/. This is best-effort — a Lossless.dll
@@ -386,8 +303,8 @@ int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir
         // Copy out so we can rewrite Binding decorations to the dense layout
         // the framegen library expects. The FP16 SPIR-V blobs ship with HLSL
         // register slots (t16/s32/u48/b0...) which must be flattened to
-        // 0,1,2,... in declaration order — same transformation the DXBC path
-        // performs via DXVK's code-stream rewriter.
+        // 0,1,2,... in declaration order to match the framework's expected
+        // descriptor layout.
         std::vector<uint8_t> blob = it->second;
         if (blob.size() < kSpirvMagic.size() ||
             !std::equal(kSpirvMagic.begin(), kSpirvMagic.end(), blob.begin())) {
@@ -410,12 +327,12 @@ int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir
     }
     LOGI("FP16 SPIR-V variants: %d cached, %d skipped (%s)", fp16Cached, fp16Skipped, fp16Dir.c_str());
 
-    // FP32 SPIR-V variants: precompiled in the DLL at DXBC_id + 98 (range
+    // FP32 SPIR-V variants: precompiled in the DLL at base id + 98 (range
     // 353..400). Same shape as the FP16 cache step above, including the
     // dense-binding rewrite — these blobs ship with HLSL register slots like
     // the FP16 set, so they need the same flatten before the framegen
-    // descriptor-set layout will accept them. Best-effort: a missing FP32
-    // SPIR-V set falls back to the (already populated) DXBC cache.
+    // descriptor-set layout will accept them. This is the default shader
+    // source; its presence was already required above.
     const std::string fp32Dir = cacheDir + "/fp32";
     if (mkdir(fp32Dir.c_str(), 0700) != 0 && errno != EEXIST) {
         LOGE("Failed to create FP32 SPIR-V cache dir %s (errno=%d) — FP32 SPIR-V path disabled",
@@ -464,11 +381,8 @@ std::vector<uint8_t> load_cached_spirv(const std::string &cacheDir, uint32_t res
             std::snprintf(path, sizeof(path), "%s/fp16/%u.spv", cacheDir.c_str(), resId);
             break;
         case ShaderCache::Fp32Spirv:
-            std::snprintf(path, sizeof(path), "%s/fp32/%u.spv", cacheDir.c_str(), resId);
-            break;
-        case ShaderCache::Dxbc:
         default:
-            std::snprintf(path, sizeof(path), "%s/%u.spv", cacheDir.c_str(), resId);
+            std::snprintf(path, sizeof(path), "%s/fp32/%u.spv", cacheDir.c_str(), resId);
             break;
     }
     std::ifstream f(path, std::ios::binary | std::ios::ate);

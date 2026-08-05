@@ -119,19 +119,6 @@ class LsfgForegroundService : Service() {
         propagateDisplayChange()
     }
 
-    // Logged so field logs can confirm/deny the low-memory-killer hypothesis
-    // when a session's log simply stops mid-frame with no shutdown message
-    // (the process was SIGKILLed, not stopped through our own teardown path).
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        LsfgLog.w(TAG, "onTrimMemory level=$level — system is reclaiming memory, session may be killed soon")
-    }
-
-    override fun onLowMemory() {
-        super.onLowMemory()
-        LsfgLog.w(TAG, "onLowMemory — system-wide low memory, session may be killed soon")
-    }
-
     private fun registerDisplayListener() {
         if (displayListener != null) return
         val dm = getSystemService(DisplayManager::class.java) ?: return
@@ -343,7 +330,7 @@ class LsfgForegroundService : Service() {
             cap?.frameGenBypass = true
             runCatching { NativeBridge.setBypass(true) }
                 .onFailure { LsfgLog.w(TAG, "initial setBypass failed", it) }
-            ov.updateStatus("DeepFG: bypass (raw capture)")
+            ov.updateStatus("LSFG: bypass (raw capture)")
         }
         // NOTE: deferring the initial FPS-counter wiring until AFTER ov.show() —
         // setFpsVisible() is a no-op when ov.fpsView hasn't been created yet,
@@ -395,7 +382,7 @@ class LsfgForegroundService : Service() {
                     cap.setLsfgNativeInputEnabled(false)
                     cap.setLsfgMode(scaledW, scaledH)
                 }
-                ov.updateStatus("DeepFG: starting ${scaledW}×${scaledH} (of ${w}×${h})…")
+                ov.updateStatus("LSFG: starting ${scaledW}×${scaledH} (of ${w}×${h})…")
 
                 val cacheDir = File(filesDir, "spirv").absolutePath
                 val pacing = PacingDefaults.forPreset(
@@ -412,7 +399,27 @@ class LsfgForegroundService : Service() {
                         performance = cfg.performanceMode,
                         hdr = cfg.hdrMode,
                         antiArtifacts = cfg.antiArtifacts,
+                        antiArtifactsIntensity = cfg.antiArtifactsIntensity,
                         framegenFp16 = cfg.framegenFp16,
+                        npuPostProcessing = cfg.npuPostProcessingEnabled,
+                        npuPreset = cfg.npuPostProcessingPreset.nativeValue,
+                        npuUpscaleFactor = cfg.npuUpscaleFactor,
+                        npuAmount = cfg.npuAmount,
+                        npuRadius = cfg.npuRadius,
+                        npuThreshold = cfg.npuThreshold,
+                        npuFp16 = cfg.npuFp16,
+                        cpuPostProcessing = cfg.cpuPostProcessingEnabled,
+                        cpuPreset = cfg.cpuPostProcessingPreset.nativeValue,
+                        cpuStrength = cfg.cpuStrength,
+                        cpuSaturation = cfg.cpuSaturation,
+                        cpuVibrance = cfg.cpuVibrance,
+                        cpuVignette = cfg.cpuVignette,
+                        gpuPostProcessing = cfg.gpuPostProcessingEnabled,
+                        gpuStage = cfg.gpuPostProcessingStage.nativeValue,
+                        gpuMethod = cfg.gpuPostProcessingMethod.nativeValue,
+                        gpuUpscaleFactor = cfg.gpuUpscaleFactor,
+                        gpuSharpness = cfg.gpuSharpness,
+                        gpuStrength = cfg.gpuStrength,
                         targetFpsCap = cfg.targetFpsCap,
                         emaAlpha = pacing.emaAlpha,
                         outlierRatio = pacing.outlierRatio,
@@ -438,7 +445,7 @@ class LsfgForegroundService : Service() {
                             // the full display resolution.
                             pendingPrivilegedVideoStart = ShizukuVideoStart(scaledW, scaledH, cfg)
                         }
-                        ov.updateStatus("DeepFG: frame-gen active ${w}×${h} ×${cfg.multiplier}")
+                        ov.updateStatus("LSFG: frame-gen active ${w}×${h} ×${cfg.multiplier}")
                         // If the user launched this session via the Benchmark
                         // screen, hand control to BenchmarkController now that
                         // framegen has reached steady state. The controller runs
@@ -453,18 +460,18 @@ class LsfgForegroundService : Service() {
                             activeRenderH = 0
                             pendingPrivilegedVideoStart = ShizukuVideoStart(w, h, cfg)
                             val label = if (captureSource == CaptureSource.ROOT) "Root" else "Shizuku"
-                            ov.updateStatus("DeepFG: $label mirror ${w}×${h} (GPU lacks required Vulkan ext)")
+                            ov.updateStatus("LSFG: $label mirror ${w}×${h} (GPU lacks required Vulkan ext)")
                         } else if (cap != null) {
                             cap.setSurface(surface, w, h)
                             activeRenderW = 0
                             activeRenderH = 0
                             // Retarget the bootstrap ImageReader capture to mirror
                             // mode because framegen is unavailable.
-                            ov.updateStatus("DeepFG: mirror ${w}×${h} (GPU lacks required Vulkan ext)")
+                            ov.updateStatus("LSFG: mirror ${w}×${h} (GPU lacks required Vulkan ext)")
                         } else {
                             activeRenderW = 0
                             activeRenderH = 0
-                            ov.updateStatus("DeepFG: frame-gen unavailable (init rc=$rc)")
+                            ov.updateStatus("LSFG: frame-gen unavailable (init rc=$rc)")
                         }
                     }
                     else -> {
@@ -474,11 +481,11 @@ class LsfgForegroundService : Service() {
                         if (isPrivilegedCapture && rc > 0) {
                             pendingPrivilegedVideoStart = ShizukuVideoStart(w, h, cfg)
                             val label = if (captureSource == CaptureSource.ROOT) "Root" else "Shizuku"
-                            ov.updateStatus("DeepFG: $label mirror active ${w}×${h} (init rc=$rc)")
+                            ov.updateStatus("LSFG: $label mirror active ${w}×${h} (init rc=$rc)")
                         } else if (cap != null) {
-                            ov.updateStatus("DeepFG: mirror active ${w}×${h} (init rc=$rc)")
+                            ov.updateStatus("LSFG: mirror active ${w}×${h} (init rc=$rc)")
                         } else {
-                            ov.updateStatus("DeepFG: init failed (rc=$rc)")
+                            ov.updateStatus("LSFG: init failed (rc=$rc)")
                         }
                     }
                 }
@@ -578,7 +585,7 @@ class LsfgForegroundService : Service() {
             capture?.frameGenBypass = bypass
             runCatching { NativeBridge.setBypass(bypass) }
                 .onFailure { LsfgLog.w(TAG, "setBypass failed", it) }
-            ov.updateStatus(if (bypass) "DeepFG: bypass (raw capture)" else "DeepFG: frame-gen active")
+            ov.updateStatus(if (bypass) "LSFG: bypass (raw capture)" else "LSFG: frame-gen active")
         }
         dr.setStopOverlayListener {
             LsfgLog.i(TAG, "Stop overlay requested from drawer")
@@ -726,7 +733,27 @@ class LsfgForegroundService : Service() {
                         performance = cfg.performanceMode,
                         hdr = cfg.hdrMode,
                         antiArtifacts = cfg.antiArtifacts,
+                        antiArtifactsIntensity = cfg.antiArtifactsIntensity,
                         framegenFp16 = cfg.framegenFp16,
+                        npuPostProcessing = cfg.npuPostProcessingEnabled,
+                        npuPreset = cfg.npuPostProcessingPreset.nativeValue,
+                        npuUpscaleFactor = cfg.npuUpscaleFactor,
+                        npuAmount = cfg.npuAmount,
+                        npuRadius = cfg.npuRadius,
+                        npuThreshold = cfg.npuThreshold,
+                        npuFp16 = cfg.npuFp16,
+                        cpuPostProcessing = cfg.cpuPostProcessingEnabled,
+                        cpuPreset = cfg.cpuPostProcessingPreset.nativeValue,
+                        cpuStrength = cfg.cpuStrength,
+                        cpuSaturation = cfg.cpuSaturation,
+                        cpuVibrance = cfg.cpuVibrance,
+                        cpuVignette = cfg.cpuVignette,
+                        gpuPostProcessing = cfg.gpuPostProcessingEnabled,
+                        gpuStage = cfg.gpuPostProcessingStage.nativeValue,
+                        gpuMethod = cfg.gpuPostProcessingMethod.nativeValue,
+                        gpuUpscaleFactor = cfg.gpuUpscaleFactor,
+                        gpuSharpness = cfg.gpuSharpness,
+                        gpuStrength = cfg.gpuStrength,
                         targetFpsCap = cfg.targetFpsCap,
                         emaAlpha = pacing.emaAlpha,
                         outlierRatio = pacing.outlierRatio,
@@ -756,7 +783,7 @@ class LsfgForegroundService : Service() {
                         startShizukuVideo(shizukuCapture, reinitTarget, scaledW, scaledH, cfg)
                         startRootVideo(rootCapture, reinitTarget, scaledW, scaledH, cfg)
                         mainHandler.post {
-                            ov.updateStatus("DeepFG: ${lastSurfaceW}×${lastSurfaceH} ×${cfg.multiplier} flow=${"%.2f".format(cfg.flowScale)}")
+                            ov.updateStatus("LSFG: ${lastSurfaceW}×${lastSurfaceH} ×${cfg.multiplier} flow=${"%.2f".format(cfg.flowScale)}")
                         }
                     } else {
                         LsfgLog.w(TAG, "reinit rc=$rc — framegen disabled, staying in mirror mode")
@@ -768,11 +795,11 @@ class LsfgForegroundService : Service() {
                         startRootVideo(rootCapture, reinitTarget, targetW, targetH, cfg)
                         mainHandler.post {
                             if ((shizukuCapture != null || rootCapture != null) && cap != null) {
-                                ov.updateStatus("DeepFG: privileged capture unavailable for mirror fallback (frame-gen unavailable)")
+                                ov.updateStatus("LSFG: privileged capture unavailable for mirror fallback (frame-gen unavailable)")
                             } else if (cap != null) {
-                                ov.updateStatus("DeepFG: mirror ${width}×${height} (GPU lacks required Vulkan ext)")
+                                ov.updateStatus("LSFG: mirror ${width}×${height} (GPU lacks required Vulkan ext)")
                             } else {
-                                ov.updateStatus("DeepFG: frame-gen unavailable (init rc=$rc)")
+                                ov.updateStatus("LSFG: frame-gen unavailable (init rc=$rc)")
                             }
                         }
                     }

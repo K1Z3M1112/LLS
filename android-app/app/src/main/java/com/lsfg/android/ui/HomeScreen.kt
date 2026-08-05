@@ -28,14 +28,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Gavel
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -52,16 +48,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import com.lsfg.android.R
+import com.lsfg.android.SHOW_IMAGE_QUALITY
 import com.lsfg.android.prefs.CaptureSource
 import com.lsfg.android.prefs.LsfgPreferences
 import com.lsfg.android.session.CrashReporter
@@ -71,6 +66,7 @@ import com.lsfg.android.session.ShizukuCaptureEngine
 import com.lsfg.android.ui.components.IconBadge
 import com.lsfg.android.ui.components.LsfgCard
 import com.lsfg.android.ui.components.LsfgLogoMark
+import com.lsfg.android.ui.components.LsfgSecondaryButton
 import com.lsfg.android.ui.components.SessionCTA
 import com.lsfg.android.ui.components.StatusTone
 import com.lsfg.android.ui.components.StepCard
@@ -84,10 +80,8 @@ fun HomeScreen(nav: NavHostController) {
     val ctx = LocalContext.current
     val prefs = remember { LsfgPreferences(ctx) }
     val state by produceConfigState(prefs).collectAsState()
-    val clipboard = LocalClipboardManager.current
 
     var lastError by remember { mutableStateOf<String?>(null) }
-    var showMoreMenu by remember { mutableStateOf(false) }
     var pendingTargetPkg by remember { mutableStateOf<String?>(null) }
     var pendingCaptureSource by remember { mutableStateOf(CaptureSource.MEDIA_PROJECTION) }
     var showCrashDialog by remember { mutableStateOf(false) }
@@ -132,19 +126,6 @@ fun HomeScreen(nav: NavHostController) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Spacer(Modifier.height(4.dp))
-                        TextButton(onClick = {
-                            clipboard.setText(AnnotatedString(crashPreview))
-                            Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(
-                                imageVector = Icons.Filled.ContentCopy,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.size(6.dp))
-                            Text("Copy")
-                        }
                     }
                 }
             },
@@ -303,56 +284,6 @@ fun HomeScreen(nav: NavHostController) {
                     }
                 },
             )
-            Spacer(Modifier.size(8.dp))
-            Box {
-                IconChip(
-                    icon = Icons.Filled.MoreVert,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    onClick = { showMoreMenu = true },
-                )
-                DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.nav_tutorial)) },
-                        leadingIcon = { Icon(Icons.Filled.School, contentDescription = null) },
-                        onClick = {
-                            showMoreMenu = false
-                            nav.navigate(Routes.TUTORIAL)
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.benchmark_home_button)) },
-                        leadingIcon = { Icon(Icons.Filled.Speed, contentDescription = null) },
-                        onClick = {
-                            showMoreMenu = false
-                            nav.navigate(Routes.BENCHMARK)
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Re-read legal notice") },
-                        leadingIcon = { Icon(Icons.Filled.Gavel, contentDescription = null) },
-                        onClick = {
-                            showMoreMenu = false
-                            nav.navigate(Routes.LEGAL)
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.crash_export_log)) },
-                        leadingIcon = { Icon(Icons.Filled.BugReport, contentDescription = null) },
-                        onClick = {
-                            showMoreMenu = false
-                            val intent = CrashReporter.buildShareIntent(ctx)
-                            if (intent == null) {
-                                Toast.makeText(ctx, R.string.crash_export_none, Toast.LENGTH_SHORT).show()
-                            } else {
-                                ctx.startActivity(
-                                    Intent.createChooser(intent, "Export diagnostic log")
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            }
-                        },
-                    )
-                }
-            }
         }
 
         // Hero session card with CTA
@@ -452,32 +383,11 @@ fun HomeScreen(nav: NavHostController) {
             }
             if (lastError != null) {
                 Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = lastError!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.size(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .clickable {
-                                clipboard.setText(AnnotatedString(lastError!!))
-                                Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.ContentCopy,
-                            contentDescription = "Copy error",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
+                Text(
+                    text = lastError!!,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
 
         }
@@ -543,7 +453,9 @@ fun HomeScreen(nav: NavHostController) {
             }
         }
 
-        // Steps — cards grouped by concept (prerequisite → target → frame gen/pacing → display).
+        // Steps — 5 cards grouped by concept (prerequisite → target → frame gen/pacing →
+        // image quality → display). Post-process accelerators (GPU/NPU/CPU) are no longer
+        // separate top-level steps; they share the "Image quality" screen.
         val dllStatus = if (state.shadersReady) StatusTone.Good
         else if (state.dllDisplayName != null) StatusTone.Warn
         else StatusTone.Neutral
@@ -578,7 +490,7 @@ fun HomeScreen(nav: NavHostController) {
                 append("Multiplier ${state.multiplier}× · flow ${"%.2f".format(state.flowScale)}")
                 if (state.performanceMode) append(" · perf")
                 if (state.hdrMode) append(" · HDR")
-                if (state.antiArtifacts) append(" · anti-artifacts")
+                if (state.antiArtifacts) append(" · anti-artifacts ${state.antiArtifactsIntensity}%")
             }
         } else {
             "Off — raw capture passthrough"
@@ -591,6 +503,27 @@ fun HomeScreen(nav: NavHostController) {
             statusLabel = if (state.lsfgEnabled) "On" else "Off",
             onClick = { nav.navigate(Routes.PARAMS_FRAMEGEN_PACING) },
         )
+
+        if (SHOW_IMAGE_QUALITY) {
+            val imageQualitySummary = buildString {
+                val parts = mutableListOf<String>()
+                if (state.gpuPostProcessingEnabled) parts += "GPU " + gpuMethodLabel(state.gpuPostProcessingMethod)
+                if (state.npuPostProcessingEnabled) parts += "NPU ${(state.npuAmount * 100f).toInt()}%"
+                if (state.cpuPostProcessingEnabled) parts += "CPU ${(state.cpuStrength * 100f).toInt()}%"
+                if (parts.isEmpty()) append("Off") else append(parts.joinToString(" · "))
+            }
+            val imageQualityOn = state.gpuPostProcessingEnabled ||
+                state.npuPostProcessingEnabled ||
+                state.cpuPostProcessingEnabled
+            StepCard(
+                number = 4,
+                title = stringResource(R.string.nav_image_quality),
+                subtitle = imageQualitySummary,
+                status = if (imageQualityOn) StatusTone.Good else StatusTone.Neutral,
+                statusLabel = if (imageQualityOn) "On" else "Off",
+                onClick = { nav.navigate(Routes.PARAMS_IMAGE_QUALITY) },
+            )
+        }
 
         val overlayDisplaySummary = buildString {
             append(
@@ -612,7 +545,7 @@ fun HomeScreen(nav: NavHostController) {
             if (state.fpsCounterEnabled) append(" · FPS")
         }
         StepCard(
-            number = 4,
+            number = if (SHOW_IMAGE_QUALITY) 5 else 4,
             title = stringResource(R.string.nav_overlay_display),
             subtitle = overlayDisplaySummary,
             status = StatusTone.Neutral,
@@ -631,13 +564,58 @@ fun HomeScreen(nav: NavHostController) {
             stringResource(R.string.automatic_overlay_count_n, autoCount)
         }
         StepCard(
-            number = 5,
+            number = if (SHOW_IMAGE_QUALITY) 6 else 5,
             title = stringResource(R.string.nav_automatic_overlay),
             subtitle = autoSubtitle,
             status = if (autoCount > 0) StatusTone.Good else StatusTone.Neutral,
             statusLabel = if (autoCount > 0) "On" else "Off",
             onClick = { nav.navigate(Routes.AUTOMATIC_OVERLAY) },
         )
+
+        // Footer actions
+        LsfgCard {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "MORE",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = LsfgPrimary,
+                )
+                LsfgSecondaryButton(
+                    text = stringResource(R.string.nav_tutorial),
+                    onClick = { nav.navigate(Routes.TUTORIAL) },
+                    leadingIcon = Icons.Filled.School,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                LsfgSecondaryButton(
+                    text = stringResource(R.string.benchmark_home_button),
+                    onClick = { nav.navigate(Routes.BENCHMARK) },
+                    leadingIcon = Icons.Filled.Speed,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                LsfgSecondaryButton(
+                    text = "Re-read legal notice",
+                    onClick = { nav.navigate(Routes.LEGAL) },
+                    leadingIcon = Icons.Filled.Gavel,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                LsfgSecondaryButton(
+                    text = stringResource(R.string.crash_export_log),
+                    onClick = {
+                        val intent = CrashReporter.buildShareIntent(ctx)
+                        if (intent == null) {
+                            Toast.makeText(ctx, R.string.crash_export_none, Toast.LENGTH_SHORT).show()
+                        } else {
+                            ctx.startActivity(
+                                Intent.createChooser(intent, "Export diagnostic log")
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }
+                    },
+                    leadingIcon = Icons.Filled.BugReport,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
 
         Spacer(Modifier.height(8.dp))
         Text(
@@ -681,3 +659,22 @@ private fun versionName(ctx: Context): String {
 }
 
 private const val SHIZUKU_PERMISSION_REQUEST = 6104
+
+private fun gpuMethodLabel(m: com.lsfg.android.prefs.GpuPostProcessingMethod): String = when (m) {
+    com.lsfg.android.prefs.GpuPostProcessingMethod.FSR1_EASU_RCAS -> "FSR1"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.AMD_CAS -> "CAS"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.NVIDIA_NIS -> "NIS"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.LANCZOS -> "Lanczos"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.BICUBIC -> "Bicubic"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.BILINEAR -> "Bilinear"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.CATMULL_ROM -> "Catmull"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.MITCHELL_NETRAVALI -> "Mitchell"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.ANIME4K_ULTRAFAST -> "Anime4K Fast"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.ANIME4K_RESTORE -> "Anime4K Restore"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.XBRZ -> "xBRZ"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.EDGE_DIRECTED -> "Edge"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.UNSHARP_MASK -> "Unsharp"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.LUMA_SHARPEN -> "Luma"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.CONTRAST_ADAPTIVE -> "Contrast"
+    com.lsfg.android.prefs.GpuPostProcessingMethod.DEBAND -> "Deband"
+}

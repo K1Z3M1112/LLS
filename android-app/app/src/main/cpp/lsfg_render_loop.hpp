@@ -43,14 +43,44 @@ struct RenderLoopConfig {
     bool performance;     // selects LSFG_3_1P vs LSFG_3_1
     bool hdr;
     bool antiArtifacts;
+    // Sensitivity of the anti-artifact frame-similarity check, 1..100.
+    // 50 is the historical fixed-threshold behaviour (kept as the default so
+    // existing configs are unaffected). Higher = more sensitive (lower
+    // delta/hot-cell thresholds, suppresses generated frames more readily,
+    // fewer visible artifacts but more dropped-to-real-rate frames). Lower =
+    // less sensitive (fewer suppressions, smoother frame count, higher risk
+    // of visible optical-flow artifacts on fast-moving content). Ignored
+    // when antiArtifacts is false.
+    int antiArtifactsIntensity;
     // Use the precompiled SPIR-V FP16 shader variants (Lossless.dll resource
-    // IDs 304..351) instead of the DXBC-translated FP32 set (255..302). The
+    // IDs 304..351) instead of the default FP32 SPIR-V set (353..400). The
     // FP16 variants enable OpCapability Float16 and use mixed FP16/FP32 ops.
     // Requires the GPU to support VK_KHR_shader_float16_int8 + shaderFloat16,
     // and requires the FP16 SPIR-V cache to have been populated by the DLL
     // extraction step. The render loop transparently falls back to the FP32
     // path when either prerequisite is missing.
     bool framegenFp16;
+    bool npuPostProcessing;
+    int npuPreset;        // see NpuPreset: 0 off, 1 sharpen, 2 detail boost, 3 chroma clean, 4 game crisp
+    int npuUpscaleFactor; // 1 or 2
+    float npuAmount;      // 0.0 .. 1.0 enhance strength
+    float npuRadius;      // 0.5 .. 2.0 blur radius for unsharp-mask paths
+    float npuThreshold;   // 0.0 .. 1.0 (reserved)
+    bool npuFp16;
+    // CPU post-process: pure CPU pixel pass, applied after NPU (or in place
+    // of it when the user only toggled the CPU category). See CpuPreset.
+    bool cpuPostProcessing;
+    int cpuPreset;         // 0 off .. 6 cinematic
+    float cpuStrength;     // 0.0 .. 1.0
+    float cpuSaturation;   // 0.0 .. 1.0 (0.5 is neutral)
+    float cpuVibrance;     // 0.0 .. 1.0
+    float cpuVignette;     // 0.0 .. 1.0
+    bool gpuPostProcessing;
+    int gpuStage;          // 0 before LSFG on real frames, 1 after LSFG on final frames
+    int gpuMethod;         // see GpuPostProcessingMethod.nativeValue
+    float gpuUpscaleFactor;// 1.0 .. 2.0
+    float gpuSharpness;    // 0.0 .. 1.0
+    float gpuStrength;     // 0.0 .. 1.0
     // Pacing tunables (0/negative values fall back to defaults inside the loop).
     int targetFpsCap;      // 0 = unlimited
     float emaAlpha;        // 0.05 .. 0.5 (default 0.125)
@@ -93,7 +123,8 @@ uint64_t getPostedFrameCount();
 // MediaProjection delivers at the display refresh rate, which is usually
 // higher than the target app's render rate — duplicates are common. This
 // counter is the target app's TRUE render rate (what the HUD should show
-// as "real fps"). Computed via a cheap 8×8 luma hash in pushFrame.
+// as "real fps"). Computed via a cheap macro-cell luma+chroma fingerprint
+// in pushFrame (see captureContentHash).
 uint64_t getUniqueCaptureCount();
 
 // Copies up to `cap` nanosecond-intervals between consecutive overlay posts
@@ -118,6 +149,10 @@ void setBypass(bool bypass);
 
 // Toggle suppression of generated frames for high-delta frame pairs.
 void setAntiArtifacts(bool enabled);
+
+// Hot-apply the anti-artifact detection sensitivity, 1..100 (see
+// RenderLoopConfig::antiArtifactsIntensity). Out-of-range values are clamped.
+void setAntiArtifactsIntensity(int intensity);
 
 // Report the display's vsync period in nanoseconds (e.g. 16_666_666 for a
 // 60 Hz display, 8_333_333 for 120 Hz). When set to a positive value the

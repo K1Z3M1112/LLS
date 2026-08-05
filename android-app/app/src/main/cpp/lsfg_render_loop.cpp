@@ -3,7 +3,10 @@
 #include "android_vk_probe.hpp"
 #include "ahb_image_bridge.hpp"
 #include "android_shader_loader.hpp"
+#include "gpu_postprocess.hpp"
 #include "nnapi_npu.hpp"
+#include "nnapi_postprocess.hpp"
+#include "cpu_postprocess.hpp"
 
 #include "lsfg_3_1.hpp"
 #include "lsfg_3_1p.hpp"
@@ -24,6 +27,7 @@
 #include <cstdlib>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 #include <unordered_map>
 #include <dlfcn.h>
@@ -81,7 +85,7 @@ struct State {
     bool initialized = false;
     bool performanceMode = false;
     bool framegenInitOk = false;  // tracks whether LSFG_3_1::initialize succeeded
-    bool framegenFp16 = false;    // load IDs 304..351 (FP16 SPIR-V) instead of 255..302 (DXBC->SPIR-V)
+    bool framegenFp16 = false;    // load IDs 304..351 (FP16 SPIR-V) instead of 353..400 (FP32 SPIR-V)
     bool hdr = false;
     float flowScale = 1.0f;
     int32_t framegenCtxId = -1;
@@ -100,9 +104,10 @@ struct State {
     // per-row memcpy) that was the single biggest cost at multiplier ≥ 2.
     //
     // The WSI path is disabled when: the extension chain is missing
-    // (hasSwapchain=false), or surface creation failed on the current
-    // ANativeWindow. In that case the fallback CPU blit path is used
-    // transparently.
+    // (hasSwapchain=false), any CPU post-process is active (NPU or CPU
+    // filter — both mutate the destination in-place on CPU), or surface
+    // creation failed on the current ANativeWindow. In those cases the
+    // fallback CPU blit path is used transparently.
     struct SwapchainState {
         VkSurfaceKHR surface = VK_NULL_HANDLE;
         VkSwapchainKHR swapchain = VK_NULL_HANDLE;
@@ -138,22 +143,36 @@ struct State {
     // would error too, so passthrough is the right behaviour anyway.
     std::atomic<bool> framegenAutoDisabled{false};
     std::atomic<bool> antiArtifacts{false};
+    // 1..100, see RenderLoopConfig::antiArtifactsIntensity. 50 == the
+    // historical fixed thresholds.
+    std::atomic<int> antiArtifactsIntensity{50};
     std::atomic<uint64_t> cacheHits{0};
     std::atomic<uint64_t> cacheMisses{0};
+    bool npuPostProcessing = false;
+    int npuPreset = 0;
+    int npuUpscaleFactor = 1;
+    float npuAmount = 0.5f;
+    float npuRadius = 1.0f;
+    float npuThreshold = 0.0f;
+    bool npuFp16 = true;
+    NnapiPostProcessor npuPost{};
+    bool cpuPostProcessing = false;
+    int cpuPreset = 0;
+    float cpuStrength = 0.5f;
+    float cpuSaturation = 0.5f;
+    float cpuVibrance = 0.0f;
+    float cpuVignette = 0.0f;
+    CpuPostProcessor cpuPost{};
+    bool gpuPostProcessing = false;
+    int gpuStage = 1;
+    int gpuMethod = 0;
+    float gpuUpscaleFactor = 1.0f;
+    float gpuSharpness = 0.5f;
+    float gpuStrength = 0.5f;
+    bool gpuNoopLogged = false;
+    AhbImage gpuPostImage{};
+    GpuPostProcessor gpuPost{};
     std::vector<AhbImage> outputs; // multiplier-many outputs
-    // AHB → VkImage import cache. MediaProjection rotates a small pool (2-4)
-    // of AHBs; re-importing on every frame wastes vkCreateImage +
-    // vkAllocateMemory. The cache holds its own AHardwareBuffer_acquire ref
-    // so entries outlive the per-frame release. Evicted FIFO beyond kAhbCacheMax.
-    // Capped at 4 (not 8): MediaProjection rotates a pool of 2-4 buffers, so a
-    // cache of 8 pins up to 4 stale/duplicate AHBs' worth of GPU-shared memory
-    // (each ~10 MB at 1080x2408 RGBA8) with zero cache-hit benefit — pure waste
-    // that pushes the process toward the low-memory killer on constrained
-    // devices when a second heavy app (e.g. video playback) shares memory.
-    // Must be fully cleared (destroyAhbImage + AHardwareBuffer_release for each
-    // entry) before vkDestroyDevice in the cleanup path.
-    static constexpr size_t kAhbCacheMax = 4;
-    std::unordered_map<AHardwareBuffer*, AhbImage> ahbImportCache;
 
     // Output surface for the final blit. Owned (acquired from JNI).
     ANativeWindow *outWindow = nullptr;
@@ -311,15 +330,125 @@ float clamp01(float value) {
     return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
 }
 
-// Compute a cheap FNV-1a hash of an 8×8 luma grid sampled from the AHB.
-// Two identical game frames produce the same hash; two differently-rendered
-// frames produce different hashes with overwhelming probability. Quantizing
-// each luma by >>2 (dropping 2 LSBs) suppresses encoder dither noise that
-// would otherwise mark semantically-identical frames as "different".
+float clampScale(float value) {
+    return value < 1.0f ? 1.0f : (value > 2.0f ? 2.0f : value);
+}
+
+const char *gpuMethodName(int method) {
+    switch (method) {
+        case 0: return "FSR1_EASU_RCAS";
+        case 1: return "AMD_CAS";
+        case 2: return "NVIDIA_NIS";
+        case 3: return "LANCZOS";
+        case 4: return "BICUBIC";
+        case 5: return "BILINEAR";
+        case 6: return "CATMULL_ROM";
+        case 7: return "MITCHELL_NETRAVALI";
+        case 8: return "ANIME4K_ULTRAFAST";
+        case 9: return "ANIME4K_RESTORE";
+        case 10: return "XBRZ";
+        case 11: return "EDGE_DIRECTED";
+        case 12: return "UNSHARP_MASK";
+        case 13: return "LUMA_SHARPEN";
+        case 14: return "CONTRAST_ADAPTIVE";
+        case 15: return "DEBAND";
+        default: return "FSR1_EASU_RCAS";
+    }
+}
+
+const char *gpuStageName(int stage) {
+    return stage == 0 ? "before_lsfg" : "after_lsfg";
+}
+
+// Maps an NnapiPostProcess preset (see nnapi_postprocess.hpp::NpuPreset) to
+// the closest equivalent GpuPostProcessor method, for devices with no
+// dedicated NNAPI accelerator. Returns {gpuMethod, gpuUpscaleFactor}.
+std::pair<int, float> mapNpuPresetToGpu(int npuPreset, int npuUpscaleFactorReq) {
+    const float scale = npuUpscaleFactorReq == 2 ? 2.0f : 1.0f;
+    switch (npuPreset) {
+        case 1: // SHARPEN
+            return {12 /* UNSHARP_MASK */, scale};
+        case 2: // DETAIL_BOOST
+            return {14 /* CONTRAST_ADAPTIVE */, scale};
+        case 3: // CHROMA_CLEAN
+            return {15 /* DEBAND */, scale};
+        case 4: // GAME_CRISP
+            return {1 /* AMD_CAS */, scale};
+        default:
+            // OFF preset but upscale-only request (npuUpscaleFactor == 2):
+            // FSR1 EASU+RCAS is the general-purpose upscale+sharpen combo.
+            return {0 /* FSR1_EASU_RCAS */, scale};
+    }
+}
+
+// Reverse of mapNpuPresetToGpu: when the user only asked for the CPU
+// post-process category but this device *does* have a dedicated NNAPI
+// accelerator, offload to the NPU instead of spending CPU time on the blit
+// thread — same visual family, but on a free/purpose-built engine instead of
+// competing with the render loop for CPU cycles.
 //
-// Cost: ~50-100 μs total — 1× AHardwareBuffer_lock (the AHB was allocated
-// with CPU_READ_OFTEN so the lock is cheap), 64× 4-byte reads, unlock.
-// Called once per pushFrame from the ImageReader listener thread.
+// Only presets with a reasonably close NPU equivalent are mapped; presets
+// that rely on effects the NNAPI graphs don't model (temperature push,
+// vignette, split-tone grading) return NpuPreset::OFF so the caller keeps
+// running them on CPU.
+NpuPreset mapCpuPresetToNpu(int cpuPreset) {
+    switch (static_cast<CpuPreset>(cpuPreset)) {
+        case CpuPreset::ENHANCE_LUT:  // contrast boost via LUT
+            return NpuPreset::DETAIL_BOOST; // sharpen + tone curve is the closest match
+        case CpuPreset::GAMER_SHARP:  // CPU 3x3 unsharp mask
+            return NpuPreset::SHARPEN;      // direct equivalent
+        case CpuPreset::WARM:
+        case CpuPreset::COOL:
+        case CpuPreset::VIGNETTE:
+        case CpuPreset::CINEMATIC:
+        case CpuPreset::OFF:
+        default:
+            return NpuPreset::OFF; // no close NNAPI equivalent — stays on CPU
+    }
+}
+
+bool gpuWantsPreLsfg() {
+    return g.gpuPostProcessing && g.gpuStage == 0;
+}
+
+bool gpuWantsPostLsfg() {
+    return g.gpuPostProcessing && g.gpuStage != 0;
+}
+
+void noteGpuShaderPassPending() {
+    if (!g.gpuPostProcessing || g.gpuNoopLogged) return;
+    g.gpuNoopLogged = true;
+    LOGI("GPU method %s active stage=%s scale=%.2f sharp=%.2f strength=%.2f",
+         gpuMethodName(g.gpuMethod), gpuStageName(g.gpuStage),
+         g.gpuUpscaleFactor, g.gpuSharpness, g.gpuStrength);
+}
+
+// Compute a cheap FNV-1a fingerprint of the AHB for duplicate-capture
+// detection. Two identical game frames must produce the same fingerprint;
+// two differently-rendered frames should produce different fingerprints
+// with overwhelming probability.
+//
+// v1 of this sampled a single pixel at each of 64 fixed grid points. That
+// has the same blind spot computeFrameDeltaMetrics() had to fix for the
+// anti-artifact path: a small fast-moving element (cursor, projectile,
+// muzzle flash, a thin HUD element updating) can move frame-to-frame
+// without ever landing on one of the 64 sampled points, so the fingerprint
+// stays identical even though the frame genuinely changed — a false
+// "duplicate" that drops a real frame from the framegen pipeline. It was
+// also luma-only, so a pure color/tint change (colored flash, filter
+// toggle) at constant brightness hashed as a duplicate too.
+//
+// v2 fixes both by reusing the macro-cell approach from
+// computeFrameDeltaMetrics: tile the frame into cells, average a small
+// sub-grid of samples per cell (so no single pixel/thin object can be
+// missed the way a lone grid point could), and fold in a cheap chroma
+// proxy alongside luma. Averaging also cancels per-pixel encoder dither,
+// so each cell's average can be quantized more finely than the old
+// single-sample >>2 without reintroducing dither-driven false negatives.
+//
+// Cost: 1x AHardwareBuffer_lock (CPU_READ_OFTEN, so cheap) + 12*7*4 = 336
+// sample reads + unlock. ~5x the old sample count but still well under a
+// millisecond, and this only ever runs once per pushFrame.
 //
 // Returns 0 on any failure (the caller treats 0 as "unknown" and doesn't
 // update uniqueCaptures, which is fine — worst case the metric stalls for
@@ -341,18 +470,56 @@ uint32_t captureContentHash(AHardwareBuffer *ahb) {
     }
     const uint32_t stride = desc.stride * 4u;  // 4 bytes per RGBA8 pixel
     const auto *bytes = static_cast<const uint8_t *>(ptr);
-    constexpr uint32_t kGrid = 8;  // 8×8 = 64 samples
-    uint32_t hash = 0x811c9dc5u;   // FNV-1a offset basis
-    for (uint32_t gy = 0; gy < kGrid; ++gy) {
-        const uint32_t y = std::min<uint32_t>((gy * desc.height) / kGrid,
-                                              desc.height > 0 ? desc.height - 1 : 0);
-        for (uint32_t gx = 0; gx < kGrid; ++gx) {
-            const uint32_t x = std::min<uint32_t>((gx * desc.width) / kGrid,
-                                                  desc.width > 0 ? desc.width - 1 : 0);
-            const uint8_t *p = bytes + y * stride + x * 4u;
-            // Rec.709 luma, quantized by >>2 to drop the 2 noisiest bits.
-            const uint32_t luma = ((77u * p[0] + 150u * p[1] + 29u * p[2]) >> 10);
-            hash = (hash ^ luma) * 0x01000193u;  // FNV-1a prime
+    const uint32_t w = desc.width;
+    const uint32_t h = desc.height;
+
+    // 12x7 macro-cells (matches the aspect-ratio bias of the 16x9 grid
+    // used elsewhere), each averaged over a 2x2 sub-grid — 336 samples
+    // total vs 64 before, with no fixed sample point able to "hide" behind
+    // a small moving object the way a single 8x8 point could.
+    constexpr uint32_t kCellsX = 12;
+    constexpr uint32_t kCellsY = 7;
+    constexpr uint32_t kSubGrid = 2;
+
+    uint32_t hash = 0x811c9dc5u;  // FNV-1a offset basis
+    for (uint32_t cy = 0; cy < kCellsY; ++cy) {
+        for (uint32_t cx = 0; cx < kCellsX; ++cx) {
+            uint32_t lumaSum = 0;
+            int32_t chromaSum = 0;
+            uint32_t samples = 0;
+            for (uint32_t sy = 0; sy < kSubGrid; ++sy) {
+                const uint32_t gy = cy * kSubGrid + sy;
+                const uint32_t y = std::min<uint32_t>((gy * h) / (kCellsY * kSubGrid),
+                                                      h > 0 ? h - 1 : 0);
+                for (uint32_t sx = 0; sx < kSubGrid; ++sx) {
+                    const uint32_t gx = cx * kSubGrid + sx;
+                    const uint32_t x = std::min<uint32_t>((gx * w) / (kCellsX * kSubGrid),
+                                                          w > 0 ? w - 1 : 0);
+                    const uint8_t *p = bytes + y * stride + x * 4u;
+                    // Rec.709 luma (0-255 range at this point, quantized below).
+                    lumaSum += (77u * p[0] + 150u * p[1] + 29u * p[2]) >> 8u;
+                    // Cheap chroma proxy (R-B): catches color-only shifts a
+                    // pure luma fingerprint misses when brightness barely
+                    // moves (colored flash, tint/filter change).
+                    chromaSum += static_cast<int32_t>(p[0]) - static_cast<int32_t>(p[2]);
+                    ++samples;
+                }
+            }
+            // Average over the sub-grid, then quantize. Averaging already
+            // cancels per-pixel dither, so >>2 here is finer (16 luma
+            // levels per cell) than the old single-sample >>2 was while
+            // staying just as stable against encoder noise.
+            const uint32_t cellLuma = samples > 0 ? (lumaSum / samples) >> 2u : 0u;
+            const int32_t cellChromaAvg = samples > 0
+                ? chromaSum / static_cast<int32_t>(samples) : 0;
+            // Chroma proxy ranges roughly -255..255; fold its sign+magnitude
+            // in coarsely quantized so real tint shifts register without
+            // making the hash oversensitive to single-channel dither.
+            const uint32_t cellChroma = static_cast<uint32_t>(
+                (cellChromaAvg + 256) >> 4);  // ~5 bits, always non-negative
+
+            hash = (hash ^ cellLuma) * 0x01000193u;    // FNV-1a prime
+            hash = (hash ^ cellChroma) * 0x01000193u;
         }
     }
     AHardwareBuffer_unlock(ahb, nullptr);
@@ -361,11 +528,45 @@ uint32_t captureContentHash(AHardwareBuffer *ahb) {
     return hash == 0u ? 1u : hash;
 }
 
-bool shouldSuppressGeneratedFrames(const AhbImage &prev, const AhbImage &cur) {
-    if (prev.ahb == nullptr || cur.ahb == nullptr) return false;
-    if (prev.extent.width == 0 || prev.extent.height == 0) return false;
+// Content-similarity metrics between two captured frames, used to decide
+// whether optical-flow output would be reliable enough to show.
+//
+// The old implementation averaged luma delta over the whole frame. That
+// hides exactly the case anti-artifacts exists to catch: a small fast-moving
+// object (a thrown grenade, a bird, a UI cursor trail) against an otherwise
+// static background lights up only 1-2% of the frame, so the whole-frame
+// average stays comfortably under threshold while the flow field around
+// that object is garbage. Conversely a broad, gentle brightness fade (day/
+// night cycle, screen dim) nudges every cell a little and can cross a
+// whole-frame-average threshold even though flow is perfectly fine there.
+//
+// Fix: sample a grid of macro-cells (each itself a small sub-grid, so a
+// single dithered pixel can't flip a cell's verdict) and track three
+// independent signals instead of one:
+//   - meanDelta:      whole-frame average (catches global fades/pans)
+//   - hotCellFraction: % of cells that individually changed a lot (catches
+//                      small fast-moving subjects the average would dilute)
+//   - maxCellDelta:    worst single cell (diagnostic / future per-region use)
+struct FrameDeltaMetrics {
+    double meanDelta = 0.0;
+    double hotCellFraction = 0.0;
+    double maxCellDelta = 0.0;
+    bool valid = false;
+};
+
+FrameDeltaMetrics computeFrameDeltaMetrics(const AhbImage &prev, const AhbImage &cur) {
+    FrameDeltaMetrics m{};
+    if (prev.ahb == nullptr || cur.ahb == nullptr) return m;
+    if (prev.extent.width == 0 || prev.extent.height == 0) return m;
     if (prev.extent.width != cur.extent.width || prev.extent.height != cur.extent.height) {
-        return true;
+        // Resolution changed mid-stream (rotation, resize) — flow is
+        // meaningless here. Report as maximally different so callers don't
+        // need a separate size-mismatch branch.
+        m.valid = true;
+        m.meanDelta = 255.0;
+        m.hotCellFraction = 1.0;
+        m.maxCellDelta = 255.0;
+        return m;
     }
 
     AHardwareBuffer_Desc prevDesc{};
@@ -374,24 +575,29 @@ bool shouldSuppressGeneratedFrames(const AhbImage &prev, const AhbImage &cur) {
     AHardwareBuffer_describe(cur.ahb, &curDesc);
     if (prevDesc.format != AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM ||
             curDesc.format != AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM) {
-        return false;
+        return m;
     }
 
     void *prevPtr = nullptr;
     void *curPtr = nullptr;
     if (AHardwareBuffer_lock(prev.ahb, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY,
             -1, nullptr, &prevPtr) != 0 || prevPtr == nullptr) {
-        return false;
+        return m;
     }
     if (AHardwareBuffer_lock(cur.ahb, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY,
             -1, nullptr, &curPtr) != 0 || curPtr == nullptr) {
         AHardwareBuffer_unlock(prev.ahb, nullptr);
-        return false;
+        return m;
     }
 
-    constexpr uint32_t kGridX = 32;
-    constexpr uint32_t kGridY = 18;
-    constexpr uint32_t kLumaDeltaThreshold = 26;
+    // 16x9 macro-cells (~same total sample budget as the old 32x18 flat
+    // grid: 16*9*9 = 1296 samples vs 576 before — still ~150-250 μs on a
+    // CPU_READ_RARELY-locked AHB), each with its own 3x3 sub-grid so a cell's
+    // verdict reflects local structure, not one noisy pixel.
+    constexpr uint32_t kCellsX = 16;
+    constexpr uint32_t kCellsY = 9;
+    constexpr uint32_t kSubGrid = 3;
+
     const uint32_t w = std::min(prevDesc.width, curDesc.width);
     const uint32_t h = std::min(prevDesc.height, curDesc.height);
     const uint32_t prevStride = prevDesc.stride * 4;
@@ -399,24 +605,114 @@ bool shouldSuppressGeneratedFrames(const AhbImage &prev, const AhbImage &cur) {
     const auto *prevBytes = static_cast<const uint8_t *>(prevPtr);
     const auto *curBytes = static_cast<const uint8_t *>(curPtr);
 
-    uint64_t totalDelta = 0;
-    uint32_t samples = 0;
-    for (uint32_t gy = 0; gy < kGridY; ++gy) {
-        const uint32_t y = std::min((gy * h) / kGridY, h - 1);
-        for (uint32_t gx = 0; gx < kGridX; ++gx) {
-            const uint32_t x = std::min((gx * w) / kGridX, w - 1);
-            const uint8_t *a = prevBytes + y * prevStride + x * 4;
-            const uint8_t *b = curBytes + y * curStride + x * 4;
-            const int prevLuma = (77 * a[0] + 150 * a[1] + 29 * a[2]) >> 8;
-            const int curLuma = (77 * b[0] + 150 * b[1] + 29 * b[2]) >> 8;
-            totalDelta += static_cast<uint32_t>(std::abs(curLuma - prevLuma));
-            samples++;
+    // Per-cell threshold for "this region moved". Higher than the old flat
+    // threshold (26) because a cell average of 3x3=9 samples is noisier than
+    // the old 576-sample whole-frame average — needs more margin above
+    // encoder dither before it's trusted as real motion.
+    constexpr double kHotCellThreshold = 34.0;
+
+    double sumDelta = 0.0;
+    uint32_t totalSamples = 0;
+    uint32_t hotCells = 0;
+    double worstCell = 0.0;
+
+    for (uint32_t cy = 0; cy < kCellsY; ++cy) {
+        for (uint32_t cx = 0; cx < kCellsX; ++cx) {
+            double cellSum = 0.0;
+            uint32_t cellSamples = 0;
+            for (uint32_t sy = 0; sy < kSubGrid; ++sy) {
+                const uint32_t gy = cy * kSubGrid + sy;
+                const uint32_t y = std::min((gy * h) / (kCellsY * kSubGrid),
+                                            h > 0 ? h - 1 : 0);
+                for (uint32_t sx = 0; sx < kSubGrid; ++sx) {
+                    const uint32_t gx = cx * kSubGrid + sx;
+                    const uint32_t x = std::min((gx * w) / (kCellsX * kSubGrid),
+                                                w > 0 ? w - 1 : 0);
+                    const uint8_t *a = prevBytes + y * prevStride + x * 4;
+                    const uint8_t *b = curBytes + y * curStride + x * 4;
+                    const int prevLuma = (77 * a[0] + 150 * a[1] + 29 * a[2]) >> 8;
+                    const int curLuma  = (77 * b[0] + 150 * b[1] + 29 * b[2]) >> 8;
+                    // Cheap chroma proxy (R-B): catches color-only shifts —
+                    // a colored flash, a tint/filter change — that a pure
+                    // luma delta misses when brightness barely moves.
+                    const int prevChroma = a[0] - a[2];
+                    const int curChroma  = b[0] - b[2];
+                    const double delta = std::abs(curLuma - prevLuma) +
+                                          0.5 * std::abs(curChroma - prevChroma);
+                    cellSum += delta;
+                    cellSamples++;
+                }
+            }
+            const double cellAvg = cellSamples > 0 ? cellSum / cellSamples : 0.0;
+            sumDelta += cellSum;
+            totalSamples += cellSamples;
+            if (cellAvg > worstCell) worstCell = cellAvg;
+            if (cellAvg >= kHotCellThreshold) hotCells++;
         }
     }
 
     AHardwareBuffer_unlock(cur.ahb, nullptr);
     AHardwareBuffer_unlock(prev.ahb, nullptr);
-    return samples > 0 && (totalDelta / samples) >= kLumaDeltaThreshold;
+
+    if (totalSamples == 0) return m;
+    m.valid = true;
+    m.meanDelta = sumDelta / totalSamples;
+    m.hotCellFraction = static_cast<double>(hotCells) / static_cast<double>(kCellsX * kCellsY);
+    m.maxCellDelta = worstCell;
+    return m;
+}
+
+// Converts the user-facing 1..100 anti-artifact intensity into a multiplier
+// applied to the base detection thresholds below. 50 maps to 1.0 (the
+// historical fixed-threshold behaviour), so leaving the slider at its
+// default changes nothing.
+//
+// Piecewise-linear around the 50 midpoint:
+//   intensity=1   -> scale=2.2  (thresholds ~2.2x higher: least sensitive,
+//                                 generated frames are suppressed rarely)
+//   intensity=50  -> scale=1.0  (unchanged from the pre-slider behaviour)
+//   intensity=100 -> scale=0.4  (thresholds well under half: most sensitive,
+//                                 suppresses aggressively at the first sign
+//                                 of a bad optical-flow pair)
+double artifactIntensityScale(int intensity) {
+    const int clamped = intensity < 1 ? 1 : (intensity > 100 ? 100 : intensity);
+    if (clamped <= 50) {
+        return 2.2 - (clamped - 1) / 49.0 * 1.2;
+    }
+    return 1.0 - (clamped - 50) / 50.0 * 0.6;
+}
+
+// Two independent triggers, OR'd together — either one alone means this
+// pair isn't safe to interpolate:
+//   - global fade/pan: whole-frame average crossed threshold
+//   - localized motion: a small fraction of cells (>=6% of the frame, e.g.
+//     a fast-moving object) changed a lot even though the average didn't
+// Both base thresholds are scaled by the user's anti-artifact intensity
+// (see artifactIntensityScale) before comparison.
+bool frameLooksUnreliableForFlow(const FrameDeltaMetrics &m, int intensity) {
+    if (!m.valid) return false;
+    constexpr double kGlobalThreshold = 22.0;
+    constexpr double kHotCellFractionThreshold = 0.06;
+    const double scale = artifactIntensityScale(intensity);
+    return m.meanDelta >= kGlobalThreshold * scale ||
+           m.hotCellFraction >= kHotCellFractionThreshold * scale;
+}
+
+// Hysteresis over the raw per-frame verdict. Content sitting right at the
+// threshold (e.g. a slow steady pan) would otherwise flip the decision every
+// other frame — generated frame shown, then dropped, then shown again — which
+// reads as a stutter that's arguably worse than committing to either state.
+// Requires 2 consecutive "unreliable" reads to start suppressing, and 2
+// consecutive "reliable" reads to resume, before actually changing state.
+bool updateSuppressionWithHysteresis(bool &suppressing, int &streak, bool unreliable) {
+    constexpr int kEnterStreak = 2;
+    constexpr int kExitStreak = 2;
+    streak = unreliable
+        ? (streak > 0 ? streak + 1 : 1)
+        : (streak < 0 ? streak - 1 : -1);
+    if (!suppressing && streak >= kEnterStreak) suppressing = true;
+    else if (suppressing && streak <= -kExitStreak) suppressing = false;
+    return suppressing;
 }
 
 // Sleep until `deadline`, but if we know the display's vsync period, nudge
@@ -1098,21 +1394,14 @@ bool copyAhbImage(const AhbImage &src, const AhbImage &dst) {
         .commandBufferCount = 1,
         .pCommandBuffers = &cb,
     };
-    // Use a per-submission VkFence instead of vkQueueWaitIdle so we only block
-    // on THIS submission — not the entire queue — avoiding unnecessary pipeline drains.
-    VkFenceCreateInfo fci{ .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-    VkFence fence = VK_NULL_HANDLE;
-    g.vk.fn.vkCreateFence(g.vk.device, &fci, nullptr, &fence);
-    const VkResult qsr = g.vk.fn.vkQueueSubmit(g.vk.computeQueue, 1, &si, fence);
+    const VkResult qsr = g.vk.fn.vkQueueSubmit(g.vk.computeQueue, 1, &si, VK_NULL_HANDLE);
     if (qsr != VK_SUCCESS) {
         LOGE("copyAhbImage vkQueueSubmit failed: %d dst=%ux%u", (int)qsr,
              dst.extent.width, dst.extent.height);
-        g.vk.fn.vkDestroyFence(g.vk.device, fence, nullptr);
         g.vk.fn.vkFreeCommandBuffers(g.vk.device, g.vk.commandPool, 1, &cb);
         return false;
     }
-    g.vk.fn.vkWaitForFences(g.vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
-    g.vk.fn.vkDestroyFence(g.vk.device, fence, nullptr);
+    g.vk.fn.vkQueueWaitIdle(g.vk.computeQueue);
     g.vk.fn.vkFreeCommandBuffers(g.vk.device, g.vk.commandPool, 1, &cb);
     return true;
 }
@@ -1221,39 +1510,63 @@ bool blitAhbImageGpu(const AhbImage &src, const AhbImage &dst) {
     return ok;
 }
 
-bool processRealFrameIntoSlot(const AhbImage &src, const AhbImage &dst) {
-    if (copyAhbImage(src, dst)) {
+bool ensureGpuPostImage(uint32_t width, uint32_t height) {
+    if (g.gpuPostImage.ahb != nullptr &&
+            g.gpuPostImage.extent.width == width &&
+            g.gpuPostImage.extent.height == height) {
         return true;
     }
-    LOGW("Raw copy failed; falling back to Vulkan linear blit");
-    return blitAhbImageGpu(src, dst);
+    destroyAhbImage(g.vk, g.gpuPostImage);
+    const int rc = createAhbImage(g.vk, width, height, VK_FORMAT_R8G8B8A8_UNORM,
+                                  g.gpuPostImage);
+    if (rc != kOk) {
+        LOGW("GPU post-process intermediate allocation failed rc=%d size=%ux%u",
+             rc, width, height);
+        return false;
+    }
+    return true;
+}
+
+bool processRealFrameIntoSlot(const AhbImage &src, const AhbImage &dst) {
+    if (!gpuWantsPreLsfg()) {
+        return copyAhbImage(src, dst);
+    }
+    noteGpuShaderPassPending();
+    const GpuPostProcessConfig gpuCfg{
+        .method = g.gpuMethod,
+        .sharpness = g.gpuSharpness,
+        .strength = g.gpuStrength,
+    };
+    if (g.gpuPost.process(g.vk, src, dst, gpuCfg)) {
+        return true;
+    }
+    LOGW("GPU pre-LSFG processing failed; falling back to Vulkan linear blit");
+    if (blitAhbImageGpu(src, dst)) {
+        return true;
+    }
+    LOGW("GPU pre-LSFG fallback failed; falling back to raw copy");
+    return copyAhbImage(src, dst);
 }
 
 bool initFramegen(const char *cacheDir) {
     const std::string cache(cacheDir ? cacheDir : "");
 
     // There are three shader sources, in order of preference for a given
-    // session:
+    // session. Lossless.dll 3.2.2+ ships both as native SPIR-V — there is no
+    // DXBC bytecode and no translation step:
     //
     //   1. FP16 SPIR-V (Lossless.dll IDs 304..351): user-requested half-precision.
     //   2. FP32 SPIR-V (Lossless.dll IDs 353..400): default for a normal session.
-    //   3. DXBC translated by dxvk (Lossless.dll IDs 255..302): legacy fallback.
     //
-    // Why FP32 SPIR-V is the new default instead of the dxvk-translated DXBC:
-    // the bundled dxvk DXBC→SPIR-V compiler (thirdparty/dxbc/src/dxbc/
-    // dxbc_compiler.cpp:34) emits `OpCapability VulkanMemoryModel` on EVERY
-    // shader. That feature is optional in Vulkan 1.2/1.3 and absent on Mali
-    // Bifrost/Valhall (G57/G68/G77) — those drivers silently accept the
-    // request at vkCreateDevice time, then DEVICE_LOST on the first compute
-    // dispatch (see Mali-G57 field log "presentContext threw: Unable to
-    // submit command buffer (error -4)").
-    //
-    // The precompiled FP32 SPIR-V from the DLL uses `OpMemoryModel Logical
-    // GLSL450` with NO VMM capability — verified across the entire 353..400
-    // range via _analysis/dump_fp32_spv.py / _analysis/fp32/. Same shader
-    // outputs as the DXBC path, no Float16 dependency, and bypasses dxvk
-    // entirely. So when both caches are populated, FP32 SPIR-V is strictly a
-    // win: same precision, broader device coverage, no translation step.
+    // Why FP32 SPIR-V is the default: it has NO VulkanMemoryModel capability
+    // (verified across the entire 353..400 range via
+    // _analysis/dump_fp32_spv.py / _analysis/fp32/ — `OpMemoryModel Logical
+    // GLSL450`, no VMM). That feature is optional in Vulkan 1.2/1.3 and
+    // absent on Mali Bifrost/Valhall (G57/G68/G77) — those drivers silently
+    // accept the request at vkCreateDevice time, then DEVICE_LOST on the
+    // first compute dispatch (see Mali-G57 field log "presentContext threw:
+    // Unable to submit command buffer (error -4)"). FP32 SPIR-V sidesteps
+    // that entirely while keeping full precision.
     const bool fp16Available = fp16_shaders_available(cache);
     const bool fp32SpirvAvailable = fp32_spirv_shaders_available(cache);
     const bool deviceHasVMM = device_supports_vulkan_memory_model();
@@ -1264,49 +1577,44 @@ bool initFramegen(const char *cacheDir) {
              cache.c_str());
     }
 
-    // Auto-flip to FP16 when the device can't run the dxvk path AND can't run
-    // the FP32 SPIR-V path either, but FP16 is available. This is the rescue
-    // route for an FP16-only DLL extraction on a Mali device.
+    // Defensive fallback: extraction requires the FP32 SPIR-V cache to be
+    // complete, so fp32SpirvAvailable should normally be true here. If the
+    // on-disk cache is somehow incomplete anyway (partial write, cleared
+    // cache dir, etc.) and the device also lacks vulkanMemoryModel, auto-flip
+    // to FP16 rather than dispatching a shader path the driver will reject.
     if (!useFp16 && !fp32SpirvAvailable && fp16Available
             && device_supports_float16()
             && !deviceHasVMM) {
-        LOGW("Device lacks vulkanMemoryModel and FP32 SPIR-V cache is missing — "
-             "auto-forcing FP16 framegen path so dxvk is bypassed.");
+        LOGW("Device lacks vulkanMemoryModel and FP32 SPIR-V cache is incomplete — "
+             "auto-forcing FP16 framegen path.");
         useFp16 = true;
     }
 
-    // Pick FP32 SPIR-V over DXBC whenever both options exist and the user
-    // hasn't asked for FP16. On VMM-less devices this is mandatory; on devices
-    // that DO support VMM it's still the better default (no dxvk translation
-    // cost at session-start, smaller binary surface, identical shader output).
+    // FP32 SPIR-V is the only path now (no DXBC translator). Its presence
+    // was already required at extraction time, so fp32SpirvAvailable should
+    // always be true here; useFp16 (user preference, or the VMM-less rescue
+    // route above) is the only thing that can override it.
     const bool useFp32Spirv = !useFp16 && fp32SpirvAvailable;
     if (useFp16) {
         LOGI("Loading framegen shaders from FP16 SPIR-V cache (Lossless.dll resource IDs 304..351)");
-    } else if (useFp32Spirv) {
-        LOGI("Loading framegen shaders from FP32 SPIR-V cache (Lossless.dll resource IDs 353..400) "
-             "— bypasses dxvk DXBC translator (deviceVMM=%d)", (int)deviceHasVMM);
     } else {
-        LOGI("Loading framegen shaders from DXBC cache (Lossless.dll resource IDs 255..302) "
-             "— translated via dxvk; requires vulkanMemoryModel (deviceVMM=%d)",
-             (int)deviceHasVMM);
+        LOGI("Loading framegen shaders from FP32 SPIR-V cache (Lossless.dll resource IDs 353..400) "
+             "(deviceVMM=%d)", (int)deviceHasVMM);
     }
 
-    auto loader = [cache, useFp16, useFp32Spirv](const std::string &name) -> std::vector<uint8_t> {
+    auto loader = [cache, useFp16](const std::string &name) -> std::vector<uint8_t> {
         // Framegen requests shaders by symbolic name (e.g. "p_mipmaps");
-        // we cache them on disk by numeric resource ID. Each of the three
-        // sources has its own ID range and on-disk subdirectory, all keyed
-        // off the canonical DXBC id via constant offsets.
+        // we cache them on disk by numeric resource ID. FP16/FP32 each have
+        // their own ID range and on-disk subdirectory, keyed off the
+        // canonical base id via constant offsets.
         uint32_t id = 0;
-        ShaderCache source = ShaderCache::Dxbc;
+        ShaderCache source = ShaderCache::Fp32Spirv;
         if (useFp16) {
             id = shader_name_to_resource_id_fp16(name);
             source = ShaderCache::Fp16Spirv;
-        } else if (useFp32Spirv) {
+        } else {
             id = shader_name_to_resource_id_fp32_spirv(name);
             source = ShaderCache::Fp32Spirv;
-        } else {
-            id = shader_name_to_resource_id(name);
-            source = ShaderCache::Dxbc;
         }
         if (id == 0) {
             LOGE("Unknown shader name '%s' from framegen", name.c_str());
@@ -1314,25 +1622,14 @@ bool initFramegen(const char *cacheDir) {
         }
         auto spirv = load_cached_spirv(cache, id, source);
 
-        // Per-shader fallback chain: FP16 → FP32 SPIR-V → DXBC. A single
-        // missing blob shouldn't kill the session if a lower-tier cache can
-        // serve it. Skipping a missing FP32 SPIR-V → DXBC also means the
-        // device must support VMM for that one shader to dispatch — that's
-        // correct: if the FP32 cache was complete we wouldn't be here.
+        // Single fallback: FP16 → FP32 SPIR-V. A single missing FP16 blob
+        // shouldn't kill the session if FP32 can serve it.
         if (spirv.empty() && source == ShaderCache::Fp16Spirv) {
             const uint32_t fp32Id = shader_name_to_resource_id_fp32_spirv(name);
             if (fp32Id != 0) {
                 LOGW("FP16 shader '%s' (id %u) missing — falling back to FP32 SPIR-V (id %u)",
                      name.c_str(), id, fp32Id);
                 spirv = load_cached_spirv(cache, fp32Id, ShaderCache::Fp32Spirv);
-            }
-        }
-        if (spirv.empty() && (source == ShaderCache::Fp16Spirv || source == ShaderCache::Fp32Spirv)) {
-            const uint32_t dxbcId = shader_name_to_resource_id(name);
-            if (dxbcId != 0) {
-                LOGW("SPIR-V shader '%s' (id %u) missing — falling back to DXBC (id %u)",
-                     name.c_str(), id, dxbcId);
-                spirv = load_cached_spirv(cache, dxbcId, ShaderCache::Dxbc);
             }
         }
         if (spirv.empty()) {
@@ -1399,14 +1696,37 @@ bool createFramegenContext() {
 //
 //  1. GPU fast path (WSI): vkCmdBlitImage from the output AHB's VkImage
 //     straight into the next swapchain image, then vkQueuePresentKHR. Zero
-//     CPU touch of the pixel data. Saves ~3-5 ms/blit at 1080p.
+//     CPU touch of the pixel data. Used when the swapchain is live AND no
+//     CPU post-process stage is active (NPU/CPU filters mutate pixels
+//     on CPU and need the lock path). Saves ~3-5 ms/blit at 1080p.
 //
 //  2. CPU path (legacy): AHardwareBuffer_lock(CPU_READ) on the output,
 //     ANativeWindow_lock on the window's next buffer, memcpy rows, post.
-//     Used when WSI is unavailable.
+//     Still used when WSI is unavailable OR NPU/CPU post is on.
 //
-void blitOutputToWindow(const AhbImage &out) {
+// GPU post-process (when enabled) runs into g.gpuPostImage via a compute
+// shader first, then THAT AHB goes through either path above.
+void blitOutputToWindow(const AhbImage &out, bool allowGpuPost = true) {
     if (g.outWindow == nullptr || out.ahb == nullptr) return;
+
+    if (allowGpuPost && gpuWantsPostLsfg()) {
+        noteGpuShaderPassPending();
+        const uint32_t scaledW = std::max<uint32_t>(
+            1, static_cast<uint32_t>(std::lround(out.extent.width * g.gpuUpscaleFactor)));
+        const uint32_t scaledH = std::max<uint32_t>(
+            1, static_cast<uint32_t>(std::lround(out.extent.height * g.gpuUpscaleFactor)));
+        const GpuPostProcessConfig gpuCfg{
+            .method = g.gpuMethod,
+            .sharpness = g.gpuSharpness,
+            .strength = g.gpuStrength,
+        };
+        if (ensureGpuPostImage(scaledW, scaledH) &&
+                g.gpuPost.process(g.vk, out, g.gpuPostImage, gpuCfg)) {
+            blitOutputToWindow(g.gpuPostImage, false);
+            return;
+        }
+        LOGW("GPU post-process failed; falling back to direct overlay blit");
+    }
 
     // WSI fast path: skip the CPU lock/memcpy entirely. Only viable when no
     // CPU-side post-process is active (NPU or CPU filters need to read and
@@ -1417,7 +1737,8 @@ void blitOutputToWindow(const AhbImage &out) {
     // overlay's Surface is still owned by the mirror VirtualDisplay, but by
     // the time blitOutputToWindow runs the VD has been retargeted to the
     // ImageReader by setLsfgMode and the Surface is free.
-    if (kEnableWsiSwapchain && g.vk.hasSwapchain
+    const bool cpuPostActive = g.npuPostProcessing || g.cpuPostProcessing;
+    if (kEnableWsiSwapchain && !cpuPostActive && g.vk.hasSwapchain
             && !g.swap.disabledForSession) {
         std::lock_guard<std::mutex> lock(g.mu);
         if (g.swap.swapchain == VK_NULL_HANDLE) {
@@ -1439,8 +1760,11 @@ void blitOutputToWindow(const AhbImage &out) {
         }
     }
 
-    const uint32_t targetW = out.extent.width;
-    const uint32_t targetH = out.extent.height;
+    const uint32_t npuScale = g.npuPostProcessing && g.npuUpscaleFactor == 2
+        ? 2U
+        : 1U;
+    const uint32_t targetW = out.extent.width * npuScale;
+    const uint32_t targetH = out.extent.height * npuScale;
     // Only call setBuffersGeometry when parameters actually change.  On some
     // drivers (MediaTek, certain Mali) calling it on every blit triggers a
     // SurfaceTexture buffer-queue reconfiguration even when nothing changed,
@@ -1459,12 +1783,10 @@ void blitOutputToWindow(const AhbImage &out) {
 
     // Synchronization is handled by the producer side before calling into this
     // blit path:
-    // - generated outputs: LSFG_3_1::waitIdle() / LSFG_3_1P::waitIdle(),
-    //   which since the cross-device sync fix wait only on the completion
-    //   fences of the frame just presented (not a full device drain)
+    // - generated outputs: LSFG_3_1::waitIdle() / LSFG_3_1P::waitIdle()
     // - raw current frame: copyAhbImage() waits for the transfer queue submit
-    // Doing a full vkDeviceWaitIdle() here would stall the whole Android-side
-    // Vulkan session on every posted frame and inject visible pacing jitter.
+    // Doing an extra vkDeviceWaitIdle() here stalls the whole Android-side
+    // Vulkan session on every posted frame and injects visible pacing jitter.
 
     AHardwareBuffer_Desc desc{};
     AHardwareBuffer_describe(out.ahb, &desc);
@@ -1479,14 +1801,13 @@ void blitOutputToWindow(const AhbImage &out) {
     const uint32_t srcStrideBytes = desc.stride * 4;  // RGBA8888
 
     // Sample luma on every frame: needed for the feedback-loop gate (not just
-    // the first 30 blits).  8×8 grid (64 pixels) is sufficient for dark-frame
-    // detection and costs ~89% fewer reads than the old 32×18 grid.
+    // the first 30 blits).  32×18 grid keeps it cheap (~576 pixels).
     uint64_t lumaSum = 0, alphaSum = 0;
     uint32_t samples = 0;
     {
         const auto *srcBytes = static_cast<const uint8_t *>(srcPtr);
-        const uint32_t sW = std::min<uint32_t>(desc.width, 8u);
-        const uint32_t sH = std::min<uint32_t>(desc.height, 8u);
+        const uint32_t sW = std::min<uint32_t>(desc.width, 32);
+        const uint32_t sH = std::min<uint32_t>(desc.height, 18);
         for (uint32_t sy = 0; sy < sH; ++sy) {
             const uint32_t y = sH > 1 ? (sy * (desc.height - 1)) / (sH - 1) : 0;
             for (uint32_t sx = 0; sx < sW; ++sx) {
@@ -1566,17 +1887,70 @@ void blitOutputToWindow(const AhbImage &out) {
 
     auto *src = static_cast<const uint8_t *>(srcPtr);
     auto *dest = static_cast<uint8_t *>(dst.bits);
+    if (gpuWantsPostLsfg()) {
+        noteGpuShaderPassPending();
+    }
+    bool npuPosted = false;
+    uint32_t producedW = desc.width;
+    uint32_t producedH = desc.height;
+    if (g.npuPostProcessing) {
+        const NnapiPostProcessConfig postCfg{
+            .preset = static_cast<NpuPreset>(g.npuPreset),
+            .upscaleFactor = g.npuUpscaleFactor,
+            .amount = g.npuAmount,
+            .radius = g.npuRadius,
+            .threshold = g.npuThreshold,
+            .fp16 = g.npuFp16,
+        };
+        // configure() returns true only when a graph is compiled on a
+        // dedicated NPU. If it returns false we treat this frame as no-op
+        // for the NPU stage — but we don't disable the whole category
+        // unless processRgba8888 actually fails.
+        if (g.npuPost.configure(desc.width, desc.height, postCfg) &&
+                g.npuPost.outputWidth() <= static_cast<uint32_t>(dst.width) &&
+                g.npuPost.outputHeight() <= static_cast<uint32_t>(dst.height)) {
+            npuPosted = g.npuPost.processRgba8888(src, srcStrideBytes, dest, dstStrideBytes);
+            if (npuPosted) {
+                producedW = g.npuPost.outputWidth();
+                producedH = g.npuPost.outputHeight();
+            }
+        }
+        if (!npuPosted && static_cast<NpuPreset>(g.npuPreset) != NpuPreset::OFF) {
+            LOGW("NPU post-process failed; disabling NPU category for this session");
+            g.npuPostProcessing = false;
+            g.npuPost.reset();
+        }
+    }
 
-    const uint32_t copyW = std::min<uint32_t>(desc.width, static_cast<uint32_t>(dst.width));
-    const uint32_t copyH = std::min<uint32_t>(desc.height, static_cast<uint32_t>(dst.height));
-    // Screen-capture AHBs (MediaProjection / Shizuku) always have alpha=0xFF.
-    // Use per-row memcpy instead of a per-pixel OR loop — orders of magnitude
-    // faster at 1080p+, and produces identical output for opaque content.
-    const uint32_t rowBytes = copyW * 4u;
-    for (uint32_t y = 0; y < copyH; ++y) {
-        std::memcpy(dest + y * dstStrideBytes,
-                    src  + y * srcStrideBytes,
-                    rowBytes);
+    if (!npuPosted) {
+        const uint32_t copyW = std::min<uint32_t>(desc.width, static_cast<uint32_t>(dst.width));
+        const uint32_t copyH = std::min<uint32_t>(desc.height, static_cast<uint32_t>(dst.height));
+        for (uint32_t y = 0; y < copyH; ++y) {
+            const uint32_t *sRow = reinterpret_cast<const uint32_t *>(src + y * srcStrideBytes);
+                  uint32_t *dRow = reinterpret_cast<      uint32_t *>(dest + y * dstStrideBytes);
+            for (uint32_t x = 0; x < copyW; ++x) {
+                dRow[x] = sRow[x] | 0xFF000000u;
+            }
+        }
+        producedW = copyW;
+        producedH = copyH;
+    }
+
+    // CPU post-process runs on the destination in-place. Scoped to the
+    // region we've actually written so we never read past the blit area.
+    if (g.cpuPostProcessing) {
+        const CpuPostProcessConfig cpuCfg{
+            .preset = static_cast<CpuPreset>(g.cpuPreset),
+            .strength = g.cpuStrength,
+            .saturation = g.cpuSaturation,
+            .vibrance = g.cpuVibrance,
+            .vignette = g.cpuVignette,
+        };
+        const bool active = g.cpuPost.configure(producedW, producedH, cpuCfg);
+        if (active) {
+            g.cpuPost.process(dest, dstStrideBytes, dest, dstStrideBytes,
+                              producedW, producedH);
+        }
     }
 
     const int postResult = ANativeWindow_unlockAndPost(g.outWindow);
@@ -1603,6 +1977,12 @@ void workerThread() {
     double emaNs = 0.0;
     bool emaInit = false;
     int consecutiveOutliers = 0;
+
+    // Anti-artifact suppression hysteresis state — see
+    // updateSuppressionWithHysteresis(). Persists across loop iterations so
+    // the enter/exit streak counts actually span consecutive frames.
+    bool antiArtifactSuppressing = false;
+    int antiArtifactStreak = 0;
 
     // ---- Frame-time profiling ------------------------------------------------
     //
@@ -1672,33 +2052,12 @@ void workerThread() {
 
         // Wrap the imported AHB (read-only from our perspective) and copy
         // into the oldest input slot on-the-fly.
-        // AHB import cache: MediaProjection rotates a small pool (2-4) of AHBs.
-        // Reuse the cached VkImage+VkDeviceMemory instead of allocating per frame.
         AhbImage src{};
-        bool srcFromCache = false;
-        {
-            auto it = g.ahbImportCache.find(ahb);
-            if (it != g.ahbImportCache.end()) {
-                src = it->second;
-                srcFromCache = true;
-            }
-        }
-        if (!srcFromCache) {
-            const int rc = importAhbImage(g.vk, ahb, src);
-            if (rc != kOk) {
-                LOGW("importAhbImage failed rc=%d", rc);
-                AHardwareBuffer_release(ahb); // release queue-enqueue ref
-                continue;
-            }
-            // Cache the import; acquire an extra ref so the cache outlives the frame.
-            AHardwareBuffer_acquire(ahb);
-            if (g.ahbImportCache.size() >= State::kAhbCacheMax) {
-                auto oldest = g.ahbImportCache.begin();
-                destroyAhbImage(g.vk, oldest->second);
-                AHardwareBuffer_release(oldest->first);
-                g.ahbImportCache.erase(oldest);
-            }
-            g.ahbImportCache[ahb] = src;
+        const int rc = importAhbImage(g.vk, ahb, src);
+        if (rc != kOk) {
+            LOGW("importAhbImage failed rc=%d", rc);
+            AHardwareBuffer_release(ahb); // release queue-enqueue ref
+            continue;
         }
 
         // Framegen tracks an internal frameIdx and treats inImg_0 as the
@@ -1757,18 +2116,15 @@ void workerThread() {
             if (!processRealFrameIntoSlot(src, g.inSlot[0]) ||
                     !processRealFrameIntoSlot(src, g.inSlot[1])) {
                 LOGW("bootstrap frame input processing failed");
-                // Evict from cache on failure — state may be corrupt.
-                if (g.ahbImportCache.erase(ahb)) AHardwareBuffer_release(ahb);
                 destroyAhbImage(g.vk, src);
-                AHardwareBuffer_release(ahb); // release queue-enqueue ref
+                AHardwareBuffer_release(ahb);
                 continue;
             }
         } else {
             if (!processRealFrameIntoSlot(src, g.inSlot[newSlot])) {
                 LOGW("frame input processing failed");
-                if (g.ahbImportCache.erase(ahb)) AHardwareBuffer_release(ahb);
                 destroyAhbImage(g.vk, src);
-                AHardwareBuffer_release(ahb); // release queue-enqueue ref
+                AHardwareBuffer_release(ahb);
                 continue;
             }
         }
@@ -1790,15 +2146,18 @@ void workerThread() {
         }
 
         g.framesCopied++;
-        bool suppressGeneratedFrames =
-            g.antiArtifacts.load(std::memory_order_relaxed)
-            && g.framesCopied > 1
-            && shouldSuppressGeneratedFrames(g.inSlot[prevSlot], g.inSlot[newSlot]);
+        bool suppressGeneratedFrames = false;
+        if (g.antiArtifacts.load(std::memory_order_relaxed) && g.framesCopied > 1) {
+            const FrameDeltaMetrics metrics =
+                computeFrameDeltaMetrics(g.inSlot[prevSlot], g.inSlot[newSlot]);
+            const int intensity = g.antiArtifactsIntensity.load(std::memory_order_relaxed);
+            const bool unreliable = frameLooksUnreliableForFlow(metrics, intensity);
+            suppressGeneratedFrames = updateSuppressionWithHysteresis(
+                antiArtifactSuppressing, antiArtifactStreak, unreliable);
+        }
 
-        // Cache owns the AhbImage (both hit and miss paths); only release
-        // the per-frame AHB ref that was acquired in pushFrame.
-        (void)srcFromCache;
-        AHardwareBuffer_release(ahb); // release queue-enqueue ref
+        destroyAhbImage(g.vk, src);
+        AHardwareBuffer_release(ahb);
 
         // PROFILE: input copy phase done.
         const auto tCopyDone = State::Clock::now();
@@ -1838,37 +2197,10 @@ void workerThread() {
             // Wait for framegen's GPU work to actually finish before we (a)
             // overwrite the input AHB on the next pushFrame and (b) read the
             // output AHB for the blit. Framegen and our session use different
-            // VkDevices with no shared queue, so a CPU-side wait is still
-            // required — but waitIdle() now waits only on this frame's own
-            // completion fences inside framegen's Context (see
-            // Context::waitForCompletion), not vkDeviceWaitIdle(). That
-            // previously drained every queue and every context on framegen's
-            // device and was the single biggest per-frame cost in profiling
-            // (see waitIdleNs below).
-            try {
-                if (g.performanceMode) LSFG_3_1P::waitIdle();
-                else                   LSFG_3_1::waitIdle();
-            } catch (const std::exception &e) {
-                // Same failure class as presentContext() above (fence-wait
-                // timeout or VK_ERROR_DEVICE_LOST from Context::waitForCompletion)
-                // — this call was previously unguarded, so on devices where the
-                // heavier FP32/normal-mode workload (roughly 2x the per-frame
-                // image/descriptor count vs performance mode) pushed a weaker
-                // GPU into a fence timeout, the exception escaped this
-                // worker thread uncaught and took down the whole app via
-                // std::terminate(). Degrade the same way presentContext does
-                // instead: log, auto-disable framegen on device loss, and
-                // keep the passthrough stream alive.
-                const char *what = e.what() != nullptr ? e.what() : "(null)";
-                LOGE("waitIdle threw: %s", what);
-                const bool isDeviceLost = std::strstr(what, "error -4") != nullptr ||
-                                          std::strstr(what, "DEVICE_LOST")  != nullptr;
-                if (isDeviceLost && !g.framegenAutoDisabled.load(std::memory_order_relaxed)) {
-                    LOGE("waitIdle: VK_ERROR_DEVICE_LOST — auto-disabling framegen for this session");
-                    g.framegenAutoDisabled.store(true, std::memory_order_relaxed);
-                }
-                continue;
-            }
+            // VkDevices, so vkDeviceWaitIdle on either is necessary — without
+            // an explicit shared semaphore this is the only correct sync.
+            if (g.performanceMode) LSFG_3_1P::waitIdle();
+            else                   LSFG_3_1::waitIdle();
             // PROFILE: cross-device sync complete; outputs ready to read.
             const auto tWaitIdleDone = State::Clock::now();
 
@@ -1996,7 +2328,7 @@ void workerThread() {
                 // active. The original purpose was to avoid optical-flow
                 // artefacts on fast camera motion; that case is already handled
                 // by the antiArtifacts content-similarity check earlier in this
-                // function (shouldSuppressGeneratedFrames).
+                // function (frameLooksUnreliableForFlow / updateSuppressionWithHysteresis).
                 (void)haveShizukuCadence;
 
                 captureInterval = std::chrono::nanoseconds(
@@ -2153,6 +2485,111 @@ int initRenderLoop(const char *cacheDir, const RenderLoopConfig &cfg) {
     g.framegenFp16 = cfg.framegenFp16;
     g.hdr = cfg.hdr;
     g.antiArtifacts.store(cfg.antiArtifacts, std::memory_order_relaxed);
+    g.antiArtifactsIntensity.store(
+        cfg.antiArtifactsIntensity < 1 || cfg.antiArtifactsIntensity > 100
+            ? 50 : cfg.antiArtifactsIntensity,
+        std::memory_order_relaxed);
+    const bool requestedNpu = cfg.npuPostProcessing;
+    g.npuPreset = cfg.npuPreset < 0 ? 0 : (cfg.npuPreset > 4 ? 0 : cfg.npuPreset);
+    g.npuUpscaleFactor = cfg.npuUpscaleFactor == 2 ? 2 : 1;
+    g.npuAmount = clamp01(cfg.npuAmount);
+    g.npuRadius = cfg.npuRadius < 0.5f ? 0.5f : (cfg.npuRadius > 2.0f ? 2.0f : cfg.npuRadius);
+    g.npuThreshold = clamp01(cfg.npuThreshold);
+    g.npuFp16 = cfg.npuFp16;
+    // Default: if the user toggled the NPU category on but left the preset at
+    // "Off", fall back to SHARPEN so something visible happens. Without this
+    // the UI silently had no effect until the user scrolled down and picked a
+    // preset, which read as "toggle does nothing".
+    if (requestedNpu && g.npuPreset == 0 && g.npuUpscaleFactor != 2) {
+        g.npuPreset = 1; // SHARPEN
+    }
+    const bool npuWantsWork = g.npuPreset != 0 || g.npuUpscaleFactor == 2;
+    // Enumerate NNAPI accelerator devices once and reuse below — both the
+    // explicit-NPU-request path and the CPU-auto-offload path need it, and
+    // the enumeration walks every registered NNAPI device.
+    const std::vector<ANeuralNetworksDevice *> npuDevices = nnapi_npu_accelerator_devices();
+    const bool npuAvailable = requestedNpu && npuWantsWork && !npuDevices.empty();
+    g.npuPostProcessing = npuAvailable;
+    g.cpuPostProcessing = cfg.cpuPostProcessing;
+    g.cpuPreset = cfg.cpuPreset < 0 ? 0 : (cfg.cpuPreset > 6 ? 0 : cfg.cpuPreset);
+    g.cpuStrength = clamp01(cfg.cpuStrength);
+    g.cpuSaturation = clamp01(cfg.cpuSaturation);
+    g.cpuVibrance = clamp01(cfg.cpuVibrance);
+    g.cpuVignette = clamp01(cfg.cpuVignette);
+
+    // CPU -> NPU auto-offload: the user only asked for the CPU category
+    // (didn't separately configure NPU), this device has a dedicated NNAPI
+    // accelerator sitting idle, and the chosen CPU preset has a close NPU
+    // equivalent. Move the work there instead of spending CPU time on the
+    // render/blit thread — same visual result, work goes to hardware built
+    // for exactly this rather than the CPU core the capture loop needs.
+    bool cpuAutoOffloadedToNpu = false;
+    if (g.cpuPostProcessing && !requestedNpu && !npuDevices.empty()) {
+        const NpuPreset equiv = mapCpuPresetToNpu(g.cpuPreset);
+        if (equiv != NpuPreset::OFF) {
+            g.npuPreset = static_cast<int>(equiv);
+            g.npuUpscaleFactor = 1; // CPU category never upscales; preserve resolution
+            g.npuAmount = g.cpuStrength;
+            g.npuRadius = 1.0f;
+            g.npuThreshold = 0.0f;
+            g.npuFp16 = true;
+            g.npuPostProcessing = true;
+            g.cpuPostProcessing = false; // fully replaced, don't do the work twice
+            cpuAutoOffloadedToNpu = true;
+        }
+    }
+    g.gpuPostProcessing = cfg.gpuPostProcessing;
+    g.gpuStage = cfg.gpuStage == 0 ? 0 : 1;
+    g.gpuMethod = cfg.gpuMethod < 0 ? 0 : (cfg.gpuMethod > 15 ? 0 : cfg.gpuMethod);
+    g.gpuUpscaleFactor = clampScale(cfg.gpuUpscaleFactor);
+    g.gpuSharpness = clamp01(cfg.gpuSharpness);
+    g.gpuStrength = clamp01(cfg.gpuStrength);
+    g.gpuNoopLogged = false;
+
+    // No-NPU fallback: the user asked for NPU post-processing but this
+    // device has no dedicated NNAPI accelerator. Rather than silently doing
+    // nothing, mirror the NPU preset onto the GPU post-process pipeline so
+    // they still get an equivalent result. Only kicks in if the user hasn't
+    // separately configured the GPU category themselves — an explicit GPU
+    // choice is never overridden.
+    bool npuFallbackToGpu = false;
+    if (requestedNpu && !npuAvailable && !cfg.gpuPostProcessing) {
+        const auto [fallbackMethod, fallbackScale] = mapNpuPresetToGpu(g.npuPreset, g.npuUpscaleFactor);
+        g.gpuPostProcessing = true;
+        g.gpuStage = 1; // after_lsfg — matches where NPU post-process would have run
+        g.gpuMethod = fallbackMethod;
+        g.gpuUpscaleFactor = fallbackScale;
+        g.gpuSharpness = g.npuAmount;
+        g.gpuStrength = g.npuAmount;
+        g.gpuNoopLogged = false;
+        npuFallbackToGpu = true;
+    }
+
+    if (g.gpuPostProcessing) {
+        LOGI("GPU post-processing configured: method=%s stage=%s scale=%.2f sharp=%.2f strength=%.2f%s",
+             gpuMethodName(g.gpuMethod), gpuStageName(g.gpuStage),
+             g.gpuUpscaleFactor, g.gpuSharpness, g.gpuStrength,
+             npuFallbackToGpu ? " (no-NPU fallback)" : "");
+    }
+    if (requestedNpu && !npuAvailable) {
+        LOGW("NPU post-processing requested but no dedicated NNAPI accelerator is available. %s",
+             npuFallbackToGpu
+                 ? "Falling back to the equivalent GPU post-process method."
+                 : "NPU category disabled (GPU category already configured separately).");
+    } else if (g.npuPostProcessing) {
+        LOGI("NPU post-processing enabled: preset=%d upscale=%dx amount=%.2f radius=%.2f fp16=%d devices=%s%s",
+             g.npuPreset, g.npuUpscaleFactor, g.npuAmount, g.npuRadius, (int)g.npuFp16,
+             nnapi_npu_summary().c_str(),
+             cpuAutoOffloadedToNpu ? " (auto-offloaded from CPU category)" : "");
+    }
+    if (g.cpuPostProcessing) {
+        LOGI("CPU post-processing enabled: preset=%d strength=%.2f sat=%.2f vibrance=%.2f vignette=%.2f",
+             g.cpuPreset, g.cpuStrength, g.cpuSaturation, g.cpuVibrance, g.cpuVignette);
+    } else if (cpuAutoOffloadedToNpu) {
+        LOGI("CPU post-processing preset moved to the NPU as npuPreset=%d "
+             "(idle NNAPI accelerator detected — see NPU post-processing log above).",
+             g.npuPreset);
+    }
     // flowScale on the prefs slider is "0.25..1.0" in user-friendly form, but
     // framegen wants the reciprocal (Linux passes 1.0f / conf.flowScale at
     // src/context.cpp:101). Larger user value = finer flow grid = better quality.
@@ -2204,8 +2641,16 @@ int initRenderLoop(const char *cacheDir, const RenderLoopConfig &cfg) {
         return kRenderLoopSessionFailed;
     }
 
-    const uint32_t renderW = cfg.width;
-    const uint32_t renderH = cfg.height;
+    const uint32_t renderW = gpuWantsPreLsfg()
+        ? std::max<uint32_t>(1, static_cast<uint32_t>(std::lround(cfg.width * g.gpuUpscaleFactor)))
+        : cfg.width;
+    const uint32_t renderH = gpuWantsPreLsfg()
+        ? std::max<uint32_t>(1, static_cast<uint32_t>(std::lround(cfg.height * g.gpuUpscaleFactor)))
+        : cfg.height;
+    if (gpuWantsPreLsfg()) {
+        LOGI("GPU pre-LSFG active: capture=%ux%u render=%ux%u method=%s",
+             cfg.width, cfg.height, renderW, renderH, gpuMethodName(g.gpuMethod));
+    }
 
     const VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
     for (int i = 0; i < 2; ++i) {
@@ -2250,10 +2695,11 @@ int initRenderLoop(const char *cacheDir, const RenderLoopConfig &cfg) {
     // ImageReader). Creating the swapchain before that point races against
     // ANativeWindow's single-producer rule. The first blitOutputToWindow
     // call after LSFG mode is live builds it lazily.
-    LOGW("Render loop initialised: capture=%ux%u render=%ux%u totalMult=%dx (gen=%d extra) flowScale=%.2f(internal=%.2f) hdr=%d perf=%d ctxId=%d",
+    LOGW("Render loop initialised: capture=%ux%u render=%ux%u totalMult=%dx (gen=%d extra) flowScale=%.2f(internal=%.2f) hdr=%d perf=%d npu=%d cpu=%d gpu=%d ctxId=%d",
          cfg.width, cfg.height, renderW, renderH, totalMult, g.multiplier,
          userFlow, g.flowScale,
-         (int)g.hdr, (int)g.performanceMode, g.framegenCtxId);
+         (int)g.hdr, (int)g.performanceMode, (int)g.npuPostProcessing,
+         (int)g.cpuPostProcessing, (int)g.gpuPostProcessing, g.framegenCtxId);
     // Tell the caller whether framegen is actually running. If not, Kotlin
     // will keep the overlay up in mirror mode instead of routing the capture
     // through a dead LSFG context.
@@ -2282,7 +2728,13 @@ void setOutputSurface(ANativeWindow *win, uint32_t w, uint32_t h) {
         // Reset the taint so a new window can take the WSI fast path even if
         // a previous one was poisoned for CPU.
         g.windowCpuProducerLocked = false;
-        if (kEnableWsiSwapchain && g.initialized) {
+        // WSI swapchain is only useful when no CPU-side post-process is
+        // running. If NPU or CPU filters are on, they need to read/write the
+        // pixels on CPU and the CPU blit path handles that; switching to the
+        // swapchain would break them because ANativeWindow_lock can't be
+        // mixed with Vulkan-side presents on the same surface.
+        const bool cpuPostActive = g.npuPostProcessing || g.cpuPostProcessing;
+        if (kEnableWsiSwapchain && !cpuPostActive && g.initialized) {
             if (createSwapchain()) {
                 LOGW("Output surface attached %ux%u native=%p path=WSI", w, h, static_cast<void *>(win));
             } else {
@@ -2290,6 +2742,7 @@ void setOutputSurface(ANativeWindow *win, uint32_t w, uint32_t h) {
             }
         } else {
             const char *why = !kEnableWsiSwapchain ? "WSI disabled"
+                            : cpuPostActive         ? "post-process=on"
                             : !g.initialized        ? "pre-init"
                                                     : "unknown";
             LOGW("Output surface attached %ux%u native=%p path=CPU (%s)",
@@ -2405,17 +2858,16 @@ void shutdownRenderLoop() {
             g.framegenInitOk = false;
         }
 
-        // Clear AHB import cache before any Vulkan teardown.
-        for (auto &[cachedAhb, img] : g.ahbImportCache) {
-            destroyAhbImage(g.vk, img);
-            AHardwareBuffer_release(cachedAhb);
-        }
-        g.ahbImportCache.clear();
-
         for (auto &o : g.outputs) destroyAhbImage(g.vk, o);
         g.outputs.clear();
+        g.gpuPost.reset(g.vk);
+        destroyAhbImage(g.vk, g.gpuPostImage);
         for (int i = 0; i < 2; ++i) destroyAhbImage(g.vk, g.inSlot[i]);
 
+
+
+        g.npuPost.reset();
+        g.cpuPost.reset();
 
         // Destroy swapchain (and its surface) before the underlying ANativeWindow
         // is touched — surface destruction drops its internal window ref.
@@ -2528,6 +2980,11 @@ void setBypass(bool bypass) {
 
 void setAntiArtifacts(bool enabled) {
     g.antiArtifacts.store(enabled, std::memory_order_relaxed);
+}
+
+void setAntiArtifactsIntensity(int intensity) {
+    const int clamped = intensity < 1 ? 1 : (intensity > 100 ? 100 : intensity);
+    g.antiArtifactsIntensity.store(clamped, std::memory_order_relaxed);
 }
 
 void setVsyncPeriodNs(int64_t periodNs) {

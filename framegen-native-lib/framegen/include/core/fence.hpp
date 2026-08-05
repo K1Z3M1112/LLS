@@ -50,9 +50,6 @@ namespace LSFG::Core {
         /// Get the Vulkan handle.
         [[nodiscard]] auto handle() const { return *this->fence; }
 
-        /// Whether this fence has been created (false for a default-constructed instance).
-        [[nodiscard]] bool isValid() const { return static_cast<bool>(this->fence); }
-
         // Trivially copyable, moveable and destructible
         Fence(const Fence&) noexcept = default;
         Fence& operator=(const Fence&) noexcept = default;
