@@ -102,8 +102,8 @@ LsContext::LsContext(const Hooks::DeviceInfo& info, VkSwapchainKHR swapchain,
         Utils::getDeviceUUID(info.physicalDevice),
         conf.hdr, 1.0F / conf.flowScale, conf.multiplier - 1,
         [](const std::string& name) {
-            auto dxbc = Extract::getShader(name);
-            auto spirv = Extract::translateShader(dxbc);
+            auto bytecode = Extract::getShader(name);
+            auto spirv = Extract::translateShader(bytecode);
             return spirv;
         }
     );
@@ -169,8 +169,8 @@ LsContext::LsContext(const Hooks::DeviceInfo& info, VkSwapchainKHR swapchain,
         Utils::getDeviceUUID(info.physicalDevice),
         conf.hdr, 1.0F / conf.flowScale, conf.multiplier - 1,
         [](const std::string& name) {
-            auto dxbc = Extract::getShader(name);
-            auto spirv = Extract::translateShader(dxbc);
+            auto bytecode = Extract::getShader(name);
+            auto spirv = Extract::translateShader(bytecode);
             return spirv;
         }
     );
@@ -229,14 +229,23 @@ VkResult LsContext::present(const Hooks::DeviceInfo& info, const void* pNext, Vk
     // Submit the copy and wait for it to complete synchronously.
     // On Android we need the copy to finish before calling presentContext
     // because there's no FD-based cross-device semaphore to chain them.
+    // Submit the copy with a fence attached, so we can wait for exactly
+    // this submission to finish (see note below) instead of the whole device.
+    pass.preCopyFence = Mini::Fence(info.device);
     pass.preCopyBuf.submit(info.queue.second,
         gameRenderSemaphores2,
-        { pass.preCopySemaphores.at(1).handle() });
+        { pass.preCopySemaphores.at(1).handle() },
+        pass.preCopyFence.handle());
 
     // Wait for the pre-copy to finish before telling framegen to start.
-    // This is a device-wide idle wait — heavier than semaphore-based sync
-    // but necessary because OPAQUE_FD is not available on Android.
-    Layer::ovkQueueSubmit(info.queue.second, 0, nullptr, VK_NULL_HANDLE);
+    // framegen runs on its own VkDevice and imports the same AHardwareBuffer,
+    // so it needs the GPU write into frame_0/frame_1 to be fully complete
+    // before it starts reading — there's no FD-based cross-device semaphore
+    // to chain them on Android, so we still need a CPU-side wait here.
+    // We wait on this submission's fence rather than calling
+    // vkDeviceWaitIdle(), which would additionally stall on any other,
+    // unrelated GPU work the app has queued and adds needless latency.
+    pass.preCopyFence.wait();
 
     // 2. Tell framegen to generate intermediary frames
     //    presentContext(id, -1, {}) — no semaphore FDs, synchronous

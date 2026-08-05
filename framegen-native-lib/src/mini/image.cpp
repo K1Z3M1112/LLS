@@ -186,27 +186,27 @@ Image::Image(VkDevice device, VkPhysicalDevice physicalDevice,
     VkMemoryRequirements memReqs;
     Layer::ovkGetImageMemoryRequirements(device, imageHandle, &memReqs);
 
-    // Find a compatible device-local memory type from the requirements
+    // Find a compatible device-local memory type from the requirements.
+    // Single pass: prefer device-local, otherwise fall back to the first
+    // compatible type. (Previously this ran two separate scans over the
+    // same memory type list — one pass is enough.)
     VkPhysicalDeviceMemoryProperties memProps;
     Layer::ovkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
 
     uint32_t typeIndex = UINT32_MAX;
+    uint32_t fallbackTypeIndex = UINT32_MAX;
     for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
-        if ((memReqs.memoryTypeBits & (1u << i)) &&
-            (memProps.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+        if (!(memReqs.memoryTypeBits & (1u << i)))
+            continue;
+        if (fallbackTypeIndex == UINT32_MAX)
+            fallbackTypeIndex = i;
+        if (memProps.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
             typeIndex = i;
             break;
         }
     }
-    if (typeIndex == UINT32_MAX) {
-        // Fallback: pick first compatible type (may not be device-local)
-        for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
-            if (memReqs.memoryTypeBits & (1u << i)) {
-                typeIndex = i;
-                break;
-            }
-        }
-    }
+    if (typeIndex == UINT32_MAX)
+        typeIndex = fallbackTypeIndex; // may not be device-local
     if (typeIndex == UINT32_MAX)
         throw LSFG::vulkan_error(VK_ERROR_UNKNOWN, "No memory type matches AHB image requirements");
 

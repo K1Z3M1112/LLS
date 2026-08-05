@@ -10,6 +10,7 @@
 #include "hooks.hpp"
 #include "mini/commandbuffer.hpp"
 #include "mini/commandpool.hpp"
+#include "mini/fence.hpp"
 #include "mini/image.hpp"
 #include "mini/semaphore.hpp"
 
@@ -72,6 +73,9 @@ private:
     struct RenderPassInfo {
         Mini::CommandBuffer preCopyBuf; // copy from swapchain image to frame_0/frame_1
         std::array<Mini::Semaphore, 2> preCopySemaphores; // signal when preCopyBuf is done
+        Mini::Fence preCopyFence; // Android only: signaled when preCopyBuf finishes,
+                                  // so we can wait on just this submission instead of
+                                  // stalling the whole device
 
         std::vector<Mini::Semaphore> renderSemaphores; // signal when lsfg is done with frame n
 

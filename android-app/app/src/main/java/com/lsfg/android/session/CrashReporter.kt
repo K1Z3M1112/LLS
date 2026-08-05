@@ -165,7 +165,7 @@ object CrashReporter {
         val authority = "${ctx.packageName}.fileprovider"
         val uris = ArrayList(files.map { FileProvider.getUriForFile(ctx, authority, it) })
 
-        val subject = "DeepFG crash — ${Build.MANUFACTURER} ${Build.MODEL}"
+        val subject = "LSFG-Android crash — ${Build.MANUFACTURER} ${Build.MODEL}"
         val body = buildString {
             appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             appendLine("Android: ${Build.VERSION.RELEASE} (sdk ${Build.VERSION.SDK_INT})")

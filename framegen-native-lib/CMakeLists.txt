@@ -18,7 +18,6 @@ add_compile_options(-fPIC
     -Wno-deprecated-declarations
     -Wno-unused-template)
 
-add_subdirectory(thirdparty/dxbc-to-spirv EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/pe-dll-parser/pe-parser-library EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/toml-parser EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/vulkan-loader EXCLUDE_FROM_ALL)
@@ -47,7 +46,7 @@ set_target_properties(lsfg-vk PROPERTIES
 target_include_directories(lsfg-vk
     PRIVATE include)
 target_link_libraries(lsfg-vk PRIVATE
-    pe-parse dxbc toml11
+    pe-parse toml11
     lsfg-vk-framegen)
 
 if(ANDROID)

@@ -48,21 +48,6 @@ namespace LSFG::Core {
         CommandBuffer(const Core::Device& device, const CommandPool& pool);
 
         ///
-        /// Reset the command buffer back to the Empty state so it can be
-        /// re-recorded, without freeing and reallocating a new Vulkan
-        /// command buffer. Requires the owning CommandPool to have been
-        /// created with VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT.
-        ///
-        /// The caller is responsible for ensuring the command buffer's
-        /// prior submission (if any) has finished executing on the GPU
-        /// before calling this — e.g. via the associated completion fence.
-        ///
-        /// @throws std::logic_error if the command buffer was never created.
-        /// @throws LSFG::vulkan_error if the reset fails.
-        ///
-        void reset();
-
-        ///
         /// Begin recording commands in the command buffer.
         ///
         /// @throws std::logic_error if the command buffer is in Empty state
@@ -112,8 +97,6 @@ namespace LSFG::Core {
         [[nodiscard]] CommandBufferState getState() const { return *this->state; }
         /// Get the Vulkan handle.
         [[nodiscard]] auto handle() const { return *this->commandBuffer; }
-        /// Whether this command buffer has been created (false for a default-constructed instance).
-        [[nodiscard]] bool isValid() const { return static_cast<bool>(this->commandBuffer); }
 
         /// Trivially copyable, moveable and destructible
         CommandBuffer(const CommandBuffer&) noexcept = default;

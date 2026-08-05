@@ -39,17 +39,6 @@ CommandBuffer::CommandBuffer(const Core::Device& device, const CommandPool& pool
     );
 }
 
-void CommandBuffer::reset() {
-    if (!this->commandBuffer)
-        throw std::logic_error("Command buffer was never created");
-
-    auto res = vkResetCommandBuffer(*this->commandBuffer, 0);
-    if (res != VK_SUCCESS)
-        throw LSFG::vulkan_error(res, "Unable to reset command buffer");
-
-    *this->state = CommandBufferState::Empty;
-}
-
 void CommandBuffer::begin() {
     if (*this->state != CommandBufferState::Empty)
         throw std::logic_error("Command buffer is not in Empty state");

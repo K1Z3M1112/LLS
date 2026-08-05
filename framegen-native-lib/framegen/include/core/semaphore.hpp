@@ -66,9 +66,6 @@ namespace LSFG::Core {
         /// Get the Vulkan handle.
         [[nodiscard]] auto handle() const { return *this->semaphore; }
 
-        /// Whether this semaphore has been created (false for a default-constructed instance).
-        [[nodiscard]] bool isValid() const { return static_cast<bool>(this->semaphore); }
-
         // Trivially copyable, moveable and destructible
         Semaphore(const Semaphore&) noexcept = default;
         Semaphore& operator=(const Semaphore&) noexcept = default;

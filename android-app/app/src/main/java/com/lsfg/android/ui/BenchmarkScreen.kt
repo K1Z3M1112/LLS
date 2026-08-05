@@ -348,7 +348,7 @@ fun BenchmarkScreen(nav: NavHostController) {
                     }
                     val intent = BenchmarkLogWriter.buildShareIntent(ctx, file)
                     ctx.startActivity(
-                        Intent.createChooser(intent, "Share DeepFG benchmark report")
+                        Intent.createChooser(intent, "Share LSFG benchmark report")
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     )
                 },

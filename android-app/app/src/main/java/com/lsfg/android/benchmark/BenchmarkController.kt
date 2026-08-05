@@ -5,6 +5,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.lsfg.android.prefs.LsfgPreferences
+import com.lsfg.android.prefs.NpuPostProcessingPreset
+import com.lsfg.android.prefs.CpuPostProcessingPreset
 import com.lsfg.android.prefs.VsyncRefreshOverride
 import com.lsfg.android.session.NativeBridge
 import java.io.File
@@ -139,6 +141,11 @@ object BenchmarkController {
         val savedPerformance = originalConfig.performanceMode
         val savedAntiArtifacts = originalConfig.antiArtifacts
         val savedFramegenFp16 = originalConfig.framegenFp16
+        val savedNpuEnabled = originalConfig.npuPostProcessingEnabled
+        val savedNpuPreset = originalConfig.npuPostProcessingPreset
+        val savedCpuEnabled = originalConfig.cpuPostProcessingEnabled
+        val savedCpuPreset = originalConfig.cpuPostProcessingPreset
+        val savedGpuEnabled = originalConfig.gpuPostProcessingEnabled
         val savedVsyncOverride = originalConfig.vsyncRefreshOverride
 
         // Decide up-front which precision modes are exercisable on this device.
@@ -159,6 +166,11 @@ object BenchmarkController {
             prefs.setFlowScale(BenchmarkConfig.FLOW_SCALE)
             prefs.setPerformance(BenchmarkConfig.PERFORMANCE_MODE)
             prefs.setAntiArtifacts(false)
+            prefs.setNpuPostProcessingEnabled(false)
+            prefs.setNpuPostProcessingPreset(NpuPostProcessingPreset.OFF)
+            prefs.setCpuPostProcessingEnabled(false)
+            prefs.setCpuPostProcessingPreset(CpuPostProcessingPreset.OFF)
+            prefs.setGpuPostProcessingEnabled(false)
             // AUTO honours the display's max refresh — refresh rate is selected
             // at the system level (via the WindowManager.LayoutParams set by
             // the launching Activity), so we don't change it from here. The
@@ -263,6 +275,11 @@ object BenchmarkController {
                 prefs.setPerformance(savedPerformance)
                 prefs.setAntiArtifacts(savedAntiArtifacts)
                 prefs.setFramegenFp16(savedFramegenFp16)
+                prefs.setNpuPostProcessingEnabled(savedNpuEnabled)
+                prefs.setNpuPostProcessingPreset(savedNpuPreset)
+                prefs.setCpuPostProcessingEnabled(savedCpuEnabled)
+                prefs.setCpuPostProcessingPreset(savedCpuPreset)
+                prefs.setGpuPostProcessingEnabled(savedGpuEnabled)
                 prefs.setVsyncRefreshOverride(savedVsyncOverride)
             }.onFailure { Log.w(TAG, "restoring user prefs failed", it) }
         }

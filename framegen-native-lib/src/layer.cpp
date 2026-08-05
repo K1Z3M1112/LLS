@@ -52,6 +52,9 @@ namespace {
     PFN_vkFreeMemory next_vkFreeMemory{};
     PFN_vkCreateSemaphore  next_vkCreateSemaphore{};
     PFN_vkDestroySemaphore next_vkDestroySemaphore{};
+    PFN_vkCreateFence  next_vkCreateFence{};
+    PFN_vkDestroyFence next_vkDestroyFence{};
+    PFN_vkWaitForFences next_vkWaitForFences{};
     PFN_vkGetMemoryFdKHR next_vkGetMemoryFdKHR{};
     PFN_vkGetSemaphoreFdKHR next_vkGetSemaphoreFdKHR{};
 #ifdef __ANDROID__
@@ -59,6 +62,9 @@ namespace {
 #endif
     PFN_vkGetDeviceQueue next_vkGetDeviceQueue{};
     PFN_vkQueueSubmit next_vkQueueSubmit{};
+#ifdef __ANDROID__
+    PFN_vkDeviceWaitIdle next_vkDeviceWaitIdle{};
+#endif
     PFN_vkCmdPipelineBarrier next_vkCmdPipelineBarrier{};
     PFN_vkCmdBlitImage next_vkCmdBlitImage{};
     PFN_vkAcquireNextImageKHR next_vkAcquireNextImageKHR{};
@@ -226,6 +232,9 @@ namespace {
             success &= initDeviceFunc(*pDevice, "vkFreeMemory", &next_vkFreeMemory);
             success &= initDeviceFunc(*pDevice, "vkCreateSemaphore", &next_vkCreateSemaphore);
             success &= initDeviceFunc(*pDevice, "vkDestroySemaphore", &next_vkDestroySemaphore);
+            success &= initDeviceFunc(*pDevice, "vkCreateFence", &next_vkCreateFence);
+            success &= initDeviceFunc(*pDevice, "vkDestroyFence", &next_vkDestroyFence);
+            success &= initDeviceFunc(*pDevice, "vkWaitForFences", &next_vkWaitForFences);
             success &= initDeviceFunc(*pDevice, "vkGetSemaphoreFdKHR", &next_vkGetSemaphoreFdKHR);
 #ifdef __ANDROID__
             // AHB function is optional — not all ICDs (e.g. Vortek wrapper) support it.
@@ -235,6 +244,9 @@ namespace {
 #endif
             success &= initDeviceFunc(*pDevice, "vkGetDeviceQueue", &next_vkGetDeviceQueue);
             success &= initDeviceFunc(*pDevice, "vkQueueSubmit", &next_vkQueueSubmit);
+#ifdef __ANDROID__
+            success &= initDeviceFunc(*pDevice, "vkDeviceWaitIdle", &next_vkDeviceWaitIdle);
+#endif
             success &= initDeviceFunc(*pDevice, "vkCmdPipelineBarrier", &next_vkCmdPipelineBarrier);
             success &= initDeviceFunc(*pDevice, "vkCmdBlitImage", &next_vkCmdBlitImage);
             success &= initDeviceFunc(*pDevice, "vkAcquireNextImageKHR", &next_vkAcquireNextImageKHR);
@@ -481,6 +493,28 @@ namespace Layer {
         next_vkDestroySemaphore(device, semaphore, pAllocator);
     }
 
+    VkResult ovkCreateFence(
+            VkDevice device,
+            const VkFenceCreateInfo* pCreateInfo,
+            const VkAllocationCallbacks* pAllocator,
+            VkFence* pFence) {
+        return next_vkCreateFence(device, pCreateInfo, pAllocator, pFence);
+    }
+    void ovkDestroyFence(
+            VkDevice device,
+            VkFence fence,
+            const VkAllocationCallbacks* pAllocator) {
+        next_vkDestroyFence(device, fence, pAllocator);
+    }
+    VkResult ovkWaitForFences(
+            VkDevice device,
+            uint32_t fenceCount,
+            const VkFence* pFences,
+            VkBool32 waitAll,
+            uint64_t timeout) {
+        return next_vkWaitForFences(device, fenceCount, pFences, waitAll, timeout);
+    }
+
     VkResult ovkGetMemoryFdKHR(
             VkDevice device,
             const VkMemoryGetFdInfoKHR* pGetFdInfo,
@@ -517,6 +551,12 @@ namespace Layer {
             VkFence fence) {
         return next_vkQueueSubmit(queue, submitCount, pSubmits, fence);
     }
+#ifdef __ANDROID__
+    VkResult ovkDeviceWaitIdle(
+            VkDevice device) {
+        return next_vkDeviceWaitIdle(device);
+    }
+#endif
 
     void ovkCmdPipelineBarrier(
             VkCommandBuffer commandBuffer,

@@ -300,18 +300,29 @@ class CaptureEngine(
         val reader = ImageReader.newInstance(
             width, height, PixelFormat.RGBA_8888,
             /* maxImages */
-            // Keep a slightly deeper queue than the mirror path so we can
-            // preserve consecutive captures for framegen instead of constantly
-            // collapsing to the latest frame during fast camera motion.
-            5,
+            // Single-buffer "keep 1, use 1" mode: only ever hold the most
+            // recent frame. 2 is the minimum Android allows for stable
+            // producer/consumer hand-off (1 causes the producer side to
+            // stall waiting for the consumer to release the only buffer),
+            // but acquireLatestImage() below still guarantees we never
+            // process more than the single newest frame — any older,
+            // unused frame sitting in the queue is auto-closed/discarded
+            // the moment a newer one arrives, like an inbox that only
+            // ever holds the latest unread message.
+            2,
             android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or
                     android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT
         )
         reader.setOnImageAvailableListener({ r ->
-            // In LSFG mode we want temporal continuity more than minimum latency:
-            // dropping to "latest" makes consecutive inputs farther apart in time,
-            // which is exactly what produces torso/character warping on fast pans.
-            val img = runCatching { r.acquireNextImage() }.getOrNull() ?: return@setOnImageAvailableListener
+            // acquireLatestImage() (vs acquireNextImage()) automatically
+            // releases/closes every older buffered image and hands back
+            // only the newest one — i.e. "keep 1, use 1, delete the rest".
+            // Trade-off vs the old deep-queue approach: consecutive inputs
+            // can end up farther apart in time under fast motion, which
+            // previously caused torso/character warping. Minimum latency
+            // and low memory footprint are now prioritized over that
+            // temporal smoothness.
+            val img = runCatching { r.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
             try {
                 onCaptureFrameArrived()
                 val hb = img.hardwareBuffer

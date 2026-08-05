@@ -65,7 +65,27 @@ object NativeBridge {
         performance: Boolean,
         hdr: Boolean,
         antiArtifacts: Boolean,
+        antiArtifactsIntensity: Int,
         framegenFp16: Boolean,
+        npuPostProcessing: Boolean,
+        npuPreset: Int,
+        npuUpscaleFactor: Int,
+        npuAmount: Float,
+        npuRadius: Float,
+        npuThreshold: Float,
+        npuFp16: Boolean,
+        cpuPostProcessing: Boolean,
+        cpuPreset: Int,
+        cpuStrength: Float,
+        cpuSaturation: Float,
+        cpuVibrance: Float,
+        cpuVignette: Float,
+        gpuPostProcessing: Boolean,
+        gpuStage: Int,
+        gpuMethod: Int,
+        gpuUpscaleFactor: Float,
+        gpuSharpness: Float,
+        gpuStrength: Float,
         targetFpsCap: Int,
         emaAlpha: Float,
         outlierRatio: Float,
@@ -122,12 +142,11 @@ object NativeBridge {
     external fun getPostedFrameCount(): Long
 
     /**
-     * Number of capture frames whose pixel content differs from the previous
-     * capture. MediaProjection delivers at the display refresh rate, which is
-     * usually higher than the target app's render rate — consecutive captures
-     * are often pixel-identical duplicates of the same game frame. This
-     * counter approximates the target app's TRUE render rate (what the HUD
-     * should show as "real fps"). Computed via an 8×8 luma hash in pushFrame.
+     * Number of capture frames pushed into the pipeline since the last
+     * initContext. Duplicate-frame culling (a pixel-fingerprint filter that
+     * used to drop captures identical to the previous frame before framegen
+     * saw them) has been removed — the device's own adaptive refresh rate is
+     * relied on instead, so this now counts every captured frame.
      */
     external fun getUniqueCaptureCount(): Long
 
@@ -171,6 +190,16 @@ object NativeBridge {
 
     /** Enables the native high-motion artifact suppression guard. */
     external fun setAntiArtifacts(enabled: Boolean)
+
+    /**
+     * Hot-applies the anti-artifact detection sensitivity, 1..100. 50 is the
+     * neutral/default value; higher suppresses generated frames more
+     * readily (fewer visible artifacts, more drops to real frame rate),
+     * lower suppresses less (smoother frame count, more risk of visible
+     * optical-flow artifacts on fast motion). Only has an effect while
+     * [setAntiArtifacts] is enabled.
+     */
+    external fun setAntiArtifactsIntensity(intensity: Int)
 
     /**
      * Reports the overlay display's vsync period to the native pacing loop

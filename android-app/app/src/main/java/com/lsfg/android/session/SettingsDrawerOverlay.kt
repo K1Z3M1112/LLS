@@ -29,8 +29,13 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import com.lsfg.android.SHOW_IMAGE_QUALITY
 import com.lsfg.android.prefs.DrawerEdge
+import com.lsfg.android.prefs.GpuPostProcessingMethod
+import com.lsfg.android.prefs.GpuPostProcessingStage
 import com.lsfg.android.prefs.LsfgPreferences
+import com.lsfg.android.prefs.CpuPostProcessingPreset
+import com.lsfg.android.prefs.NpuPostProcessingPreset
 import com.lsfg.android.prefs.OverlayMode
 import com.lsfg.android.prefs.PacingDefaults
 import com.lsfg.android.prefs.PacingPreset
@@ -316,7 +321,7 @@ class SettingsDrawerOverlay(
         header.addView(brandMark())
         header.addView(
             TextView(ctx).apply {
-                text = "DeepFG"
+                text = "LSFG"
                 setTextColor(COLOR_ON_SURFACE)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
                 typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
@@ -340,16 +345,13 @@ class SettingsDrawerOverlay(
         header.addView(closeBtn)
         panel.addView(header)
 
-        panel.addView(sectionSpacer(14))
-        buildQuickControlsSection(panel)
-        panel.addView(divider())
         panel.addView(sectionSpacer(12))
 
         // ---- Frame Generation (expanded by default so drawer shows content on first open) ----
         val frameGenSection = collapsibleSection(panel, "FRAME GENERATION", initiallyExpanded = true)
 
         frameGenSection.addView(switchRow(
-            label = "DeepFG Frame Gen",
+            label = "LSFG Frame Gen",
             initial = initial.lsfgEnabled,
         ) {
             Log.i(TAG, "live: lsfgEnabled=$it")
@@ -374,6 +376,37 @@ class SettingsDrawerOverlay(
             prefs.setHdr(it)
             liveParamsListener?.onParamsChanged()
         })
+        val antiArtifactsIntensityLabel = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "${initial.antiArtifactsIntensity}%"
+        }
+        val antiArtifactsIntensityRow = sliderRow("Anti-artifacts intensity", antiArtifactsIntensityLabel).apply {
+            visibility = if (initial.antiArtifacts) View.VISIBLE else View.GONE
+        }
+        val antiArtifactsIntensitySeek = SeekBar(ctx).apply {
+            max = 99
+            progress = (initial.antiArtifactsIntensity - 1).coerceIn(0, 99)
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            visibility = if (initial.antiArtifacts) View.VISIBLE else View.GONE
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    val intensity = (p + 1).coerceIn(1, 100)
+                    antiArtifactsIntensityLabel.text = "${intensity}%"
+                    if (fromUser) {
+                        // Cheap atomic-int hot-apply, same as anti-artifacts itself —
+                        // no context reinit needed.
+                        prefs.setAntiArtifactsIntensity(intensity)
+                        NativeBridge.setAntiArtifactsIntensity(intensity)
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+        }
         frameGenSection.addView(switchRow(
             label = "Anti-artifacts",
             initial = initial.antiArtifacts,
@@ -381,7 +414,11 @@ class SettingsDrawerOverlay(
             Log.i(TAG, "live: antiArtifacts=$it")
             prefs.setAntiArtifacts(it)
             NativeBridge.setAntiArtifacts(it)
+            antiArtifactsIntensityRow.visibility = if (it) View.VISIBLE else View.GONE
+            antiArtifactsIntensitySeek.visibility = if (it) View.VISIBLE else View.GONE
         })
+        frameGenSection.addView(antiArtifactsIntensityRow)
+        frameGenSection.addView(antiArtifactsIntensitySeek)
 
         // FP16 frame-gen shaders — only show when the GPU supports shaderFloat16
         // and the FP16 SPIR-V cache has been populated (same gate the in-app
@@ -549,6 +586,15 @@ class SettingsDrawerOverlay(
         buildPacingControls(pacingSection, prefs, initial)
 
         panel.addView(divider())
+
+        if (SHOW_IMAGE_QUALITY) {
+            buildGpuImageQualitySection(panel, prefs, initial)
+            panel.addView(divider())
+            buildNpuImageQualitySection(panel, prefs, initial)
+            panel.addView(divider())
+            buildCpuImageQualitySection(panel, prefs, initial)
+            panel.addView(divider())
+        }
 
         // ---- HUD & Overlay (FPS, frame graph, drawer edge) -----------------------------
         val hudSection = collapsibleSection(panel, "HUD & OVERLAY")
@@ -963,94 +1009,6 @@ class SettingsDrawerOverlay(
      * section dividers/spacers between sections remain the caller's responsibility — same visual
      * language as before, just with toggle affordances.
      */
-    /**
-     * ROG Ally Command Center–style quick panel: always-visible brightness + volume
-     * sliders at the very top of the drawer, above the collapsible detail sections.
-     * Brightness uses a per-window override (no WRITE_SETTINGS permission needed);
-     * volume drives the media stream via AudioManager.
-     */
-    private fun buildQuickControlsSection(panel: LinearLayout) {
-        panel.addView(miniHeader("QUICK CONTROLS"))
-        panel.addView(sectionSpacer(6))
-
-        // --- Brightness -----------------------------------------------------------
-        val initialBrightness = runCatching {
-            android.provider.Settings.System.getInt(
-                ctx.contentResolver,
-                android.provider.Settings.System.SCREEN_BRIGHTNESS,
-            )
-        }.getOrDefault(128).coerceIn(0, 255)
-
-        val brightnessValue = TextView(ctx).apply {
-            setTextColor(COLOR_PRIMARY)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
-            text = "${(initialBrightness * 100 / 255)}%"
-        }
-        panel.addView(sliderRow(labelText = "Screen brightness", valueView = brightnessValue))
-        panel.addView(SeekBar(ctx).apply {
-            max = 100
-            progress = (initialBrightness * 100 / 255).coerceIn(1, 100)
-            progressDrawable = buildSeekTrack()
-            thumb = buildSeekThumb()
-            splitTrack = false
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
-                    val pct = p.coerceIn(1, 100)
-                    brightnessValue.text = "$pct%"
-                    if (!fromUser) return
-                    val lp = params
-                    val r = root
-                    val wm = hostWindowManager
-                    if (lp != null && r != null && wm != null && r.isAttachedToWindow) {
-                        lp.screenBrightness = pct / 100f
-                        runCatching { wm.updateViewLayout(r, lp) }
-                            .onFailure { Log.w(TAG, "brightness updateViewLayout failed", it) }
-                    }
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-            })
-        })
-
-        panel.addView(sectionSpacer(10))
-
-        // --- Volume -----------------------------------------------------------------
-        val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-        val maxVol = runCatching {
-            audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
-        }.getOrDefault(15).coerceAtLeast(1)
-        val initialVol = runCatching {
-            audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
-        }.getOrDefault(0).coerceIn(0, maxVol)
-
-        val volumeValue = TextView(ctx).apply {
-            setTextColor(COLOR_PRIMARY)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
-            text = "${(initialVol * 100 / maxVol)}%"
-        }
-        panel.addView(sliderRow(labelText = "Media volume", valueView = volumeValue))
-        panel.addView(SeekBar(ctx).apply {
-            max = maxVol
-            progress = initialVol
-            progressDrawable = buildSeekTrack()
-            thumb = buildSeekThumb()
-            splitTrack = false
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
-                    volumeValue.text = "${(p * 100 / maxVol)}%"
-                    if (!fromUser) return
-                    runCatching {
-                        audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, p, 0)
-                    }.onFailure { Log.w(TAG, "setStreamVolume failed", it) }
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-            })
-        })
-    }
-
     private fun buildPacingControls(
         parent: LinearLayout,
         prefs: LsfgPreferences,
@@ -1411,6 +1369,249 @@ class SettingsDrawerOverlay(
         })
     }
 
+    private fun buildGpuImageQualitySection(
+        panel: LinearLayout,
+        prefs: LsfgPreferences,
+        initial: com.lsfg.android.prefs.LsfgConfig,
+    ) {
+        val gpuSection = collapsibleSection(panel, "IMAGE QUALITY — GPU")
+        gpuSection.addView(switchRow(
+            label = "GPU processing",
+            initial = initial.gpuPostProcessingEnabled,
+        ) {
+            Log.i(TAG, "live: gpuPost=$it")
+            prefs.setGpuPostProcessingEnabled(it)
+            liveParamsListener?.onParamsChanged()
+        })
+        gpuSection.addView(gpuStageChipRow(initial.gpuPostProcessingStage) {
+            prefs.setGpuPostProcessingStage(it)
+            liveParamsListener?.onParamsChanged()
+        })
+
+        gpuSection.addView(miniHeader("Scaling"))
+        gpuSection.addView(gpuMethodChipRow(
+            category = GpuMethodCategory.SCALING,
+            initial = initial.gpuPostProcessingMethod,
+        ) {
+            prefs.setGpuPostProcessingMethod(it)
+            liveParamsListener?.onParamsChanged()
+        })
+
+        val gpuScaleValue = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "%.2fx".format(initial.gpuUpscaleFactor)
+        }
+        gpuSection.addView(sliderRow("GPU scale", gpuScaleValue))
+        gpuSection.addView(SeekBar(ctx).apply {
+            max = 4
+            progress = ((initial.gpuUpscaleFactor - 1.0f) / 0.25f).toInt().coerceIn(0, 4)
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            var dragging = false
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    val scale = (1.0f + p * 0.25f).coerceIn(1.0f, 2.0f)
+                    gpuScaleValue.text = "%.2fx".format(scale)
+                    if (fromUser) {
+                        prefs.setGpuUpscaleFactor(scale)
+                        if (!dragging) liveParamsListener?.onParamsChanged()
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { dragging = true }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    dragging = false
+                    liveParamsListener?.onParamsChanged()
+                }
+            })
+        })
+
+        gpuSection.addView(miniHeader("Enhancement"))
+        gpuSection.addView(gpuMethodChipRow(
+            category = GpuMethodCategory.ENHANCEMENT,
+            initial = initial.gpuPostProcessingMethod,
+        ) {
+            prefs.setGpuPostProcessingMethod(it)
+            liveParamsListener?.onParamsChanged()
+        })
+
+        gpuSection.addView(miniHeader("Sharpen & color"))
+        gpuSection.addView(gpuMethodChipRow(
+            category = GpuMethodCategory.SHARPEN_COLOR,
+            initial = initial.gpuPostProcessingMethod,
+        ) {
+            prefs.setGpuPostProcessingMethod(it)
+            liveParamsListener?.onParamsChanged()
+        })
+
+        val gpuAdvanced = collapsibleSection(gpuSection, "ADVANCED", initiallyExpanded = false)
+
+        val gpuSharpnessValue = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "${(initial.gpuSharpness * 100f).toInt()}%"
+        }
+        gpuAdvanced.addView(sliderRow("GPU sharpness", gpuSharpnessValue))
+        gpuAdvanced.addView(SeekBar(ctx).apply {
+            max = 10
+            progress = (initial.gpuSharpness * 10f).toInt().coerceIn(0, 10)
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            var dragging = false
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    val sharpness = (p / 10f).coerceIn(0f, 1f)
+                    gpuSharpnessValue.text = "${(sharpness * 100f).toInt()}%"
+                    if (fromUser) {
+                        prefs.setGpuSharpness(sharpness)
+                        if (!dragging) liveParamsListener?.onParamsChanged()
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { dragging = true }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    dragging = false
+                    liveParamsListener?.onParamsChanged()
+                }
+            })
+        })
+
+        val gpuStrengthValue = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "${(initial.gpuStrength * 100f).toInt()}%"
+        }
+        gpuAdvanced.addView(sliderRow("GPU strength", gpuStrengthValue))
+        gpuAdvanced.addView(SeekBar(ctx).apply {
+            max = 10
+            progress = (initial.gpuStrength * 10f).toInt().coerceIn(0, 10)
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            var dragging = false
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    val strength = (p / 10f).coerceIn(0f, 1f)
+                    gpuStrengthValue.text = "${(strength * 100f).toInt()}%"
+                    if (fromUser) {
+                        prefs.setGpuStrength(strength)
+                        if (!dragging) liveParamsListener?.onParamsChanged()
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { dragging = true }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    dragging = false
+                    liveParamsListener?.onParamsChanged()
+                }
+            })
+        })
+    }
+
+    private fun buildNpuImageQualitySection(
+        panel: LinearLayout,
+        prefs: LsfgPreferences,
+        initial: com.lsfg.android.prefs.LsfgConfig,
+    ) {
+        val npuSection = collapsibleSection(panel, "IMAGE QUALITY — NPU")
+        val npuAvailable = runCatching { NativeBridge.isNpuAvailable() }.getOrDefault(false)
+        npuSection.addView(switchRow(
+            label = if (npuAvailable) "NPU enhancement" else "NPU unavailable",
+            initial = initial.npuPostProcessingEnabled && npuAvailable,
+        ) {
+            Log.i(TAG, "live: npuPost=$it available=$npuAvailable")
+            prefs.setNpuPostProcessingEnabled(it && npuAvailable)
+            liveParamsListener?.onParamsChanged()
+        })
+
+        val npuAmountValue = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "${(initial.npuAmount * 100f).toInt()}%"
+        }
+        npuSection.addView(sliderRow("NPU amount", npuAmountValue))
+        npuSection.addView(SeekBar(ctx).apply {
+            max = 10
+            progress = (initial.npuAmount * 10f).toInt().coerceIn(0, 10)
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            var dragging = false
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    val amount = (p / 10f).coerceIn(0f, 1f)
+                    npuAmountValue.text = "${(amount * 100f).toInt()}%"
+                    if (fromUser) {
+                        prefs.setNpuAmount(amount)
+                        if (!dragging) liveParamsListener?.onParamsChanged()
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { dragging = true }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    dragging = false
+                    liveParamsListener?.onParamsChanged()
+                }
+            })
+        })
+        npuSection.addView(npuPresetChipRow(initial.npuPostProcessingPreset) {
+            prefs.setNpuPostProcessingPreset(it)
+            liveParamsListener?.onParamsChanged()
+        })
+    }
+
+    private fun buildCpuImageQualitySection(
+        panel: LinearLayout,
+        prefs: LsfgPreferences,
+        initial: com.lsfg.android.prefs.LsfgConfig,
+    ) {
+        val cpuSection = collapsibleSection(panel, "IMAGE QUALITY — CPU")
+        cpuSection.addView(switchRow(
+            label = "CPU post-process",
+            initial = initial.cpuPostProcessingEnabled,
+        ) {
+            prefs.setCpuPostProcessingEnabled(it)
+            liveParamsListener?.onParamsChanged()
+        })
+        val cpuStrengthValue = TextView(ctx).apply {
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            text = "${(initial.cpuStrength * 100f).toInt()}%"
+        }
+        cpuSection.addView(sliderRow("CPU strength", cpuStrengthValue))
+        cpuSection.addView(SeekBar(ctx).apply {
+            max = 10
+            progress = (initial.cpuStrength * 10f).toInt().coerceIn(0, 10)
+            progressDrawable = buildSeekTrack()
+            thumb = buildSeekThumb()
+            splitTrack = false
+            var dragging = false
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, p: Int, fromUser: Boolean) {
+                    val strength = (p / 10f).coerceIn(0f, 1f)
+                    cpuStrengthValue.text = "${(strength * 100f).toInt()}%"
+                    if (fromUser) {
+                        prefs.setCpuStrength(strength)
+                        if (!dragging) liveParamsListener?.onParamsChanged()
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { dragging = true }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    dragging = false
+                    liveParamsListener?.onParamsChanged()
+                }
+            })
+        })
+        cpuSection.addView(cpuPresetChipRow(initial.cpuPostProcessingPreset) {
+            prefs.setCpuPostProcessingPreset(it)
+            liveParamsListener?.onParamsChanged()
+        })
+    }
+
     private fun collapsibleSection(
         parent: LinearLayout,
         title: String,
@@ -1514,7 +1715,8 @@ class SettingsDrawerOverlay(
     }
 
     /**
-     * Small uppercase caption used inside a section to group related chip rows.
+     * Small uppercase caption used inside a section to group related chip rows
+     * (e.g. "Scaling", "Enhancement", "Sharpen & color" inside the GPU section).
      */
     private fun miniHeader(text: String) = TextView(ctx).apply {
         this.text = text.uppercase()
@@ -1638,6 +1840,232 @@ class SettingsDrawerOverlay(
         row.addView(lbl)
         row.addView(sw)
         return row
+    }
+
+    private fun npuPresetChipRow(
+        initial: NpuPostProcessingPreset,
+        onChange: (NpuPostProcessingPreset) -> Unit,
+    ): View {
+        val presets = listOf(
+            NpuPostProcessingPreset.OFF to "Off",
+            NpuPostProcessingPreset.SHARPEN to "Sharpen",
+            NpuPostProcessingPreset.DETAIL_BOOST to "Detail",
+            NpuPostProcessingPreset.CHROMA_CLEAN to "Clean",
+            NpuPostProcessingPreset.GAME_CRISP to "Game",
+        )
+        return chipRowFor(initial, presets, onChange)
+    }
+
+    private fun cpuPresetChipRow(
+        initial: CpuPostProcessingPreset,
+        onChange: (CpuPostProcessingPreset) -> Unit,
+    ): View {
+        val presets = listOf(
+            CpuPostProcessingPreset.OFF to "Off",
+            CpuPostProcessingPreset.ENHANCE_LUT to "Enhance",
+            CpuPostProcessingPreset.WARM to "Warm",
+            CpuPostProcessingPreset.COOL to "Cool",
+            CpuPostProcessingPreset.VIGNETTE to "Vignette",
+            CpuPostProcessingPreset.GAMER_SHARP to "Sharp",
+            CpuPostProcessingPreset.CINEMATIC to "Cinematic",
+        )
+        return chipRowFor(initial, presets, onChange)
+    }
+
+    // Compact wrap-layout that stays readable with 4-7 chips. Chips wrap into
+    // a second line when the panel is narrow, which is the common case for
+    // the in-session drawer on phones.
+    private fun <T> chipRowFor(
+        initial: T,
+        presets: List<Pair<T, String>>,
+        onChange: (T) -> Unit,
+    ): View {
+        val outer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(6))
+        }
+        val perRow = if (presets.size <= 4) presets.size else (presets.size + 1) / 2
+        val buttons = mutableListOf<Button>()
+        fun paint(selected: T) {
+            buttons.forEachIndexed { i, btn ->
+                val isSel = presets[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
+        var i = 0
+        while (i < presets.size) {
+            val end = minOf(i + perRow, presets.size)
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(2), 0, dp(2))
+            }
+            for (j in i until end) {
+                val (preset, label) = presets[j]
+                val btn = Button(ctx).apply {
+                    text = label
+                    isAllCaps = false
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(10).toFloat()
+                    }
+                    setOnClickListener {
+                        onChange(preset)
+                        paint(preset)
+                    }
+                }
+                buttons += btn
+                row.addView(
+                    btn,
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        leftMargin = dp(3)
+                        rightMargin = dp(3)
+                    },
+                )
+            }
+            outer.addView(row, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ))
+            i = end
+        }
+        paint(initial)
+        return outer
+    }
+
+    private fun gpuStageChipRow(
+        initial: GpuPostProcessingStage,
+        onChange: (GpuPostProcessingStage) -> Unit,
+    ): View {
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(6))
+        }
+        val stages = listOf(
+            GpuPostProcessingStage.BEFORE_LSFG to "Real first",
+            GpuPostProcessingStage.AFTER_LSFG to "Final frames",
+        )
+        val buttons = mutableListOf<Button>()
+        fun paint(selected: GpuPostProcessingStage) {
+            buttons.forEachIndexed { i, btn ->
+                val isSel = stages[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
+        stages.forEach { (stage, label) ->
+            val btn = Button(ctx).apply {
+                text = label
+                isAllCaps = false
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dp(10).toFloat()
+                }
+                setOnClickListener {
+                    onChange(stage)
+                    paint(stage)
+                }
+            }
+            buttons += btn
+            row.addView(
+                btn,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    leftMargin = dp(3)
+                    rightMargin = dp(3)
+                },
+            )
+        }
+        paint(initial)
+        return row
+    }
+
+    private enum class GpuMethodCategory { SCALING, ENHANCEMENT, SHARPEN_COLOR }
+
+    private fun gpuMethodChipRow(
+        category: GpuMethodCategory,
+        initial: GpuPostProcessingMethod,
+        onChange: (GpuPostProcessingMethod) -> Unit,
+    ): View {
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(4), 0, dp(6))
+        }
+        val methods = when (category) {
+            GpuMethodCategory.SCALING -> listOf(
+                GpuPostProcessingMethod.FSR1_EASU_RCAS to "FSR1",
+                GpuPostProcessingMethod.NVIDIA_NIS to "NIS",
+                GpuPostProcessingMethod.LANCZOS to "Lanczos",
+                GpuPostProcessingMethod.BICUBIC to "Bicubic",
+                GpuPostProcessingMethod.BILINEAR to "Bilinear",
+                GpuPostProcessingMethod.CATMULL_ROM to "Catmull",
+                GpuPostProcessingMethod.MITCHELL_NETRAVALI to "Mitchell",
+            )
+            GpuMethodCategory.ENHANCEMENT -> listOf(
+                GpuPostProcessingMethod.ANIME4K_ULTRAFAST to "Anime4K Fast",
+                GpuPostProcessingMethod.ANIME4K_RESTORE to "Anime4K Restore",
+                GpuPostProcessingMethod.XBRZ to "xBRZ",
+                GpuPostProcessingMethod.EDGE_DIRECTED to "Edge",
+            )
+            GpuMethodCategory.SHARPEN_COLOR -> listOf(
+                GpuPostProcessingMethod.AMD_CAS to "CAS",
+                GpuPostProcessingMethod.UNSHARP_MASK to "Unsharp",
+                GpuPostProcessingMethod.LUMA_SHARPEN to "Luma",
+                GpuPostProcessingMethod.CONTRAST_ADAPTIVE to "Contrast",
+                GpuPostProcessingMethod.DEBAND to "Deband",
+            )
+        }
+        val buttons = mutableListOf<Button>()
+        fun paint(selected: GpuPostProcessingMethod) {
+            buttons.forEachIndexed { i, btn ->
+                val isSel = methods[i].first == selected
+                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
+                (btn.background as? GradientDrawable)?.setColor(
+                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
+                )
+            }
+        }
+        methods.chunked(2).forEach { rowMethods ->
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            rowMethods.forEach { (method, label) ->
+                val btn = Button(ctx).apply {
+                    text = label
+                    isAllCaps = false
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(10).toFloat()
+                    }
+                    setOnClickListener {
+                        onChange(method)
+                        paint(method)
+                    }
+                }
+                buttons += btn
+                row.addView(
+                    btn,
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        leftMargin = dp(3)
+                        rightMargin = dp(3)
+                        topMargin = dp(3)
+                        bottomMargin = dp(3)
+                    },
+                )
+            }
+            container.addView(row)
+        }
+        paint(initial)
+        return container
     }
 
     private fun dp(v: Int): Int {
@@ -1934,17 +2362,17 @@ class SettingsDrawerOverlay(
     companion object {
         private const val TAG = "SettingsDrawer"
 
-        // Brand palette (matches ui/theme/Color.kt dark scheme) — DeepFG / ROG-style dark + orange-red.
-        private const val COLOR_PRIMARY = 0xFFFF7A29.toInt()
-        private const val COLOR_ACCENT_DEEP = 0xFFB23A12.toInt()
-        private const val COLOR_ON_SURFACE = 0xFFECE6E1.toInt()
-        private const val COLOR_PANEL_BG = 0xF014100C.toInt()
-        private const val COLOR_PANEL_STROKE = 0x33FF7A29
+        // Brand palette (matches ui/theme/Color.kt dark scheme)
+        private const val COLOR_PRIMARY = 0xFF7FE3FF.toInt()
+        private const val COLOR_ACCENT_DEEP = 0xFF4AA8CC.toInt()
+        private const val COLOR_ON_SURFACE = 0xFFE2E8EC.toInt()
+        private const val COLOR_PANEL_BG = 0xF0141B20.toInt()
+        private const val COLOR_PANEL_STROKE = 0x33FFFFFF.toInt()
         private const val COLOR_DIVIDER = 0x1AFFFFFF
-        private const val COLOR_TRACK_BG = 0xFF2E251F.toInt()
-        private const val COLOR_CHIP_BG = 0x33FF7A29
-        private const val COLOR_STOP_BG = 0xFF2A1210.toInt()
-        private const val COLOR_STOP_STROKE = 0x66FF6B5B.toInt()
-        private const val COLOR_STOP_TEXT = 0xFFFF6B5B.toInt()
+        private const val COLOR_TRACK_BG = 0xFF232D34.toInt()
+        private const val COLOR_CHIP_BG = 0x337FE3FF
+        private const val COLOR_STOP_BG = 0xFF2A1519.toInt()
+        private const val COLOR_STOP_STROKE = 0x66FF8FA3.toInt()
+        private const val COLOR_STOP_TEXT = 0xFFFF8FA3.toInt()
     }
 }

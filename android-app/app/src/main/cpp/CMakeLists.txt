@@ -35,12 +35,6 @@ target_include_directories(pe-parse PUBLIC "${PEPARSE_DIR}/include")
 target_compile_features(pe-parse PUBLIC cxx_std_17)
 
 # -----------------------------------------------------------------------------
-# dxbc — DXVK's DXBC → SPIR-V translator (static lib). Upstream CMake is clean
-# enough to add_subdirectory without changes.
-# -----------------------------------------------------------------------------
-add_subdirectory("${LSFG_ROOT}/thirdparty/dxbc-to-spirv" "${CMAKE_BINARY_DIR}/dxbc-to-spirv" EXCLUDE_FROM_ALL)
-
-# -----------------------------------------------------------------------------
 # framegen — the Vulkan frame-generation pipeline. Reused verbatim.
 #
 # Tell Gradle's externalNativeBuild task that this project's "input set"
@@ -79,15 +73,17 @@ add_library(lsfg-android SHARED
     android_vk_probe.cpp
     android_vk_session.cpp
     ahb_image_bridge.cpp
+    gpu_postprocess.cpp
     lsfg_render_loop.cpp
     nnapi_npu.cpp
+    nnapi_postprocess.cpp
+    cpu_postprocess.cpp
     crash_reporter.cpp
 )
 
 target_link_libraries(lsfg-android
     PRIVATE
         lsfg-vk-framegen
-        dxbc
         pe-parse
         volk
         ${log-lib}

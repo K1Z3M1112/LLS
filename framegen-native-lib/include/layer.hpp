@@ -166,6 +166,25 @@ namespace Layer {
         VkSemaphore semaphore,
         const VkAllocationCallbacks* pAllocator);
 
+    /// Call to the original vkCreateFence function.
+    VkResult ovkCreateFence(
+        VkDevice device,
+        const VkFenceCreateInfo* pCreateInfo,
+        const VkAllocationCallbacks* pAllocator,
+        VkFence* pFence);
+    /// Call to the original vkDestroyFence function.
+    void ovkDestroyFence(
+        VkDevice device,
+        VkFence fence,
+        const VkAllocationCallbacks* pAllocator);
+    /// Call to the original vkWaitForFences function.
+    VkResult ovkWaitForFences(
+        VkDevice device,
+        uint32_t fenceCount,
+        const VkFence* pFences,
+        VkBool32 waitAll,
+        uint64_t timeout);
+
     /// Call to the original vkGetMemoryFdKHR function.
     VkResult ovkGetMemoryFdKHR(
         VkDevice device,
@@ -197,6 +216,14 @@ namespace Layer {
         uint32_t submitCount,
         const VkSubmitInfo* pSubmits,
         VkFence fence);
+#ifdef __ANDROID__
+    /// Call to the original vkDeviceWaitIdle function.
+    /// Used on Android to synchronize the app's device with AHB-shared
+    /// images before handing them off to framegen's separate VkDevice,
+    /// since OPAQUE_FD semaphore export is unavailable there.
+    VkResult ovkDeviceWaitIdle(
+        VkDevice device);
+#endif
 
     /// Call to the original vkCmdPipelineBarrier function.
     void ovkCmdPipelineBarrier(

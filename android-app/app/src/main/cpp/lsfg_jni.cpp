@@ -1,6 +1,7 @@
 // JNI entry points for com.lsfg.android.session.NativeBridge.
 //
-// Phase 3: extractShaders extracts DXBC resources and writes SPIR-V to disk.
+// Phase 3: extractShaders extracts native SPIR-V resources (Lossless.dll
+// 3.2.2+, no DXBC) and writes them to disk.
 // Phase 4: probeShaders validates that every cached SPIR-V blob is accepted by
 // the device driver via vkCreateShaderModule.
 // Phase 5: initContext / pushFrame / setOutputSurface / destroyContext wire
@@ -73,7 +74,16 @@ Java_com_lsfg_android_session_NativeBridge_initContext(
         jstring cacheDir, jint width, jint height,
         jint multiplier, jfloat flowScale,
         jboolean performance, jboolean hdr,
-        jboolean antiArtifacts, jboolean framegenFp16,
+        jboolean antiArtifacts, jint antiArtifactsIntensity, jboolean framegenFp16,
+        jboolean npuPostProcessing, jint npuPreset,
+        jint npuUpscaleFactor, jfloat npuAmount,
+        jfloat npuRadius, jfloat npuThreshold, jboolean npuFp16,
+        jboolean cpuPostProcessing, jint cpuPreset,
+        jfloat cpuStrength, jfloat cpuSaturation,
+        jfloat cpuVibrance, jfloat cpuVignette,
+        jboolean gpuPostProcessing, jint gpuStage,
+        jint gpuMethod, jfloat gpuUpscaleFactor,
+        jfloat gpuSharpness, jfloat gpuStrength,
         jint targetFpsCap, jfloat emaAlpha,
         jfloat outlierRatio, jfloat vsyncSlackMs,
         jint queueDepth) {
@@ -85,7 +95,11 @@ Java_com_lsfg_android_session_NativeBridge_initContext(
     // LSFG_3_1::initialize() will throw inside framegen (we catch it but the
     // pipeline will be useless anyway). Failing fast here gives a cleaner error
     // path back to Kotlin so the service can stay in mirror mode.
-    auto probeShader = lsfg_android::load_cached_spirv(cache, 255);
+    // 255 is the base "mipmaps" id; the cached file actually lives at the
+    // FP32 SPIR-V id (base + 98) — see kFp32SpirvIdOffset in
+    // android_shader_loader.cpp.
+    auto probeShader = lsfg_android::load_cached_spirv(cache, 255 + 98,
+        lsfg_android::ShaderCache::Fp32Spirv);
     if (probeShader.empty()) {
         return lsfg_android::kErrMissingResource;
     }
@@ -97,7 +111,27 @@ Java_com_lsfg_android_session_NativeBridge_initContext(
         .performance = performance == JNI_TRUE,
         .hdr = hdr == JNI_TRUE,
         .antiArtifacts = antiArtifacts == JNI_TRUE,
+        .antiArtifactsIntensity = static_cast<int>(antiArtifactsIntensity),
         .framegenFp16 = framegenFp16 == JNI_TRUE,
+        .npuPostProcessing = npuPostProcessing == JNI_TRUE,
+        .npuPreset = static_cast<int>(npuPreset),
+        .npuUpscaleFactor = static_cast<int>(npuUpscaleFactor),
+        .npuAmount = static_cast<float>(npuAmount),
+        .npuRadius = static_cast<float>(npuRadius),
+        .npuThreshold = static_cast<float>(npuThreshold),
+        .npuFp16 = npuFp16 == JNI_TRUE,
+        .cpuPostProcessing = cpuPostProcessing == JNI_TRUE,
+        .cpuPreset = static_cast<int>(cpuPreset),
+        .cpuStrength = static_cast<float>(cpuStrength),
+        .cpuSaturation = static_cast<float>(cpuSaturation),
+        .cpuVibrance = static_cast<float>(cpuVibrance),
+        .cpuVignette = static_cast<float>(cpuVignette),
+        .gpuPostProcessing = gpuPostProcessing == JNI_TRUE,
+        .gpuStage = static_cast<int>(gpuStage),
+        .gpuMethod = static_cast<int>(gpuMethod),
+        .gpuUpscaleFactor = static_cast<float>(gpuUpscaleFactor),
+        .gpuSharpness = static_cast<float>(gpuSharpness),
+        .gpuStrength = static_cast<float>(gpuStrength),
         .targetFpsCap = static_cast<int>(targetFpsCap),
         .emaAlpha = static_cast<float>(emaAlpha),
         .outlierRatio = static_cast<float>(outlierRatio),
@@ -228,6 +262,12 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_lsfg_android_session_NativeBridge_setAntiArtifacts(
         JNIEnv * /*env*/, jobject /*thiz*/, jboolean enabled) {
     lsfg_android::setAntiArtifacts(enabled == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_lsfg_android_session_NativeBridge_setAntiArtifactsIntensity(
+        JNIEnv * /*env*/, jobject /*thiz*/, jint intensity) {
+    lsfg_android::setAntiArtifactsIntensity(static_cast<int>(intensity));
 }
 
 extern "C" JNIEXPORT void JNICALL

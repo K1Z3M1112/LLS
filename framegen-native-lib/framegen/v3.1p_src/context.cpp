@@ -141,22 +141,10 @@ void Context::present(Vulkan& vk,
 
     // 1. create mipmaps and process input image
     if (inSem >= 0) data.inSemaphore = Core::Semaphore(vk.device, inSem);
-    // Internal (non-exported) semaphores are plain signal-once/wait-once
-    // binary semaphores — a wait operation implicitly returns them to the
-    // unsignaled state, so they're safe to keep across frames instead of
-    // being recreated every present(). Only allocate on first use of this
-    // ring slot.
     for (size_t i = 0; i < vk.generationCount; i++)
-        if (!data.internalSemaphores.at(i).isValid())
-            data.internalSemaphores.at(i) = Core::Semaphore(vk.device);
+        data.internalSemaphores.at(i) = Core::Semaphore(vk.device);
 
-    // Reuse this ring slot's command buffer (reset instead of reallocate)
-    // — the wait above already guarantees its prior submission has
-    // finished on the GPU.
-    if (!data.cmdBuffer1.isValid())
-        data.cmdBuffer1 = Core::CommandBuffer(vk.device, vk.commandPool);
-    else
-        data.cmdBuffer1.reset();
+    data.cmdBuffer1 = Core::CommandBuffer(vk.device, vk.commandPool);
     data.cmdBuffer1.begin();
 
 #ifdef __ANDROID__
@@ -187,19 +175,10 @@ void Context::present(Vulkan& vk,
         auto& outSemaphore = data.outSemaphores.at(pass);
         if (inSem >= 0) outSemaphore = Core::Semaphore(vk.device, outSem.empty() ? -1 : outSem.at(pass));
         auto& completionFence = data.completionFences.at(pass);
-        // Reuse the fence across frames — the wait at the top of this
-        // function already guarantees it's signaled (its prior submission
-        // is done) before we get here, so a reset is valid.
-        if (!completionFence.isValid())
-            completionFence = Core::Fence(vk.device);
-        else
-            completionFence.reset(vk.device);
+        completionFence = Core::Fence(vk.device);
 
         auto& buf2 = data.cmdBuffers2.at(pass);
-        if (!buf2.isValid())
-            buf2 = Core::CommandBuffer(vk.device, vk.commandPool);
-        else
-            buf2.reset();
+        buf2 = Core::CommandBuffer(vk.device, vk.commandPool);
         buf2.begin();
 
 #ifdef __ANDROID__
@@ -242,20 +221,6 @@ void Context::present(Vulkan& vk,
     }
 
     this->frameIdx++;
-}
-
-void Context::waitForCompletion(Vulkan& vk) const {
-    if (this->frameIdx == 0)
-        return; // present() never called, nothing to wait on
-
-    // The slot present() just finished writing into. This holds the fresh
-    // completionFences from that submission (present() reassigns them each
-    // call), not the older set that present() itself waits on internally to
-    // recycle the slot 8 frames later.
-    const auto& data = this->data.at((this->frameIdx - 1) % 8);
-    for (const auto& fence : data.completionFences)
-        if (!fence.wait(vk.device, UINT64_MAX))
-            throw LSFG::vulkan_error(VK_TIMEOUT, "Fence wait timed out");
 }
 
 #ifdef __ANDROID__

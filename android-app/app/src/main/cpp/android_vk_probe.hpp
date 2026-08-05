@@ -21,11 +21,10 @@ int probe_shaders_on_device(const std::string &cacheDir);
 // as "FP16 not available" rather than a failure to probe.
 bool device_supports_float16();
 
-// Reports whether the device advertises vulkanMemoryModel — required by the
-// DXBC→SPIR-V framegen path (the bundled dxbc translator emits OpCapability
-// VulkanMemoryModel unconditionally). The precompiled FP16 SPIR-V blobs from
-// Lossless.dll do NOT use VMM (verified in _analysis/*.dis), so a device
-// without VMM can still run framegen via the FP16 path. Used by the render
+// Reports whether the device advertises vulkanMemoryModel. Neither the FP16
+// nor FP32 native SPIR-V shaders shipped in Lossless.dll 3.2.2+ require VMM
+// (verified in _analysis/*.dis and _analysis/fp32/), so this is informational
+// / used for the defensive FP16 rescue path. Used by the render
 // loop to auto-force FP16 mode on Mali Bifrost/Valhall (G57/G68/G77) which
 // reports VMM=false. Returns false on any probe error (treat as "VMM not
 // available", same defensive default as device_supports_float16).

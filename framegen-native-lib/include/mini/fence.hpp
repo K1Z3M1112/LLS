@@ -1,51 +1,42 @@
 #pragma once
 
-#include "core/device.hpp"
-
 #include <vulkan/vulkan_core.h>
 
-#include <cstdint>
 #include <memory>
 
-namespace LSFG::Core {
+namespace Mini {
 
     ///
     /// C++ wrapper class for a Vulkan fence.
     ///
-    /// This class manages the lifetime of a Vulkan fence.
+    /// Used to wait for a *specific* piece of GPU work to finish, as a
+    /// cheaper, more targeted alternative to a full vkDeviceWaitIdle().
+    /// A device-wide idle wait blocks on everything the device is doing
+    /// (including unrelated work the app may have queued), which adds
+    /// avoidable latency to every generated frame. Waiting on a fence
+    /// only blocks until the one submission that signals it is done.
     ///
     class Fence {
     public:
         Fence() noexcept = default;
 
         ///
-        /// Create the fence.
+        /// Create the fence (unsignaled).
         ///
         /// @param device Vulkan device
         ///
         /// @throws LSFG::vulkan_error if object creation fails.
         ///
-        Fence(const Core::Device& device);
+        Fence(VkDevice device);
 
         ///
-        /// Reset the fence to an unsignaled state.
+        /// Block the calling thread until the fence is signaled.
         ///
-        /// @param device Vulkan device
-        ///
-        /// @throws LSFG::vulkan_error if resetting fails.
-        ///
-        void reset(const Core::Device& device) const;
-
-        ///
-        /// Wait for the fence
-        ///
-        /// @param device Vulkan device
-        /// @param timeout The timeout in nanoseconds, or UINT64_MAX for no timeout.
-        /// @returns true if the fence signaled, false if it timed out.
+        /// @param timeout Timeout in nanoseconds (default: no timeout).
         ///
         /// @throws LSFG::vulkan_error if waiting fails.
         ///
-        [[nodiscard]] bool wait(const Core::Device& device, uint64_t timeout = UINT64_MAX) const;
+        void wait(uint64_t timeout = UINT64_MAX) const;
 
         /// Get the Vulkan handle.
         [[nodiscard]] auto handle() const { return *this->fence; }
@@ -57,6 +48,7 @@ namespace LSFG::Core {
         Fence& operator=(Fence&&) noexcept = default;
         ~Fence() = default;
     private:
+        VkDevice device{};
         std::shared_ptr<VkFence> fence;
     };
 
