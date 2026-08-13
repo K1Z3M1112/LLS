@@ -461,7 +461,6 @@ class LsfgForegroundService : Service() {
                     PacingDefaults.Params(cfg.emaAlpha, cfg.outlierRatio),
                 )
                 val ai = aiBackendArgs(cfg)
-                runCatching { NativeBridge.setPresentMode(cfg.presentMode.vkValue) }
                 val rc = runCatching {
                     NativeBridge.initContext(
                         cacheDir = cacheDir,
@@ -885,7 +884,6 @@ class LsfgForegroundService : Service() {
                 // gets captured and fed to the native context.
                 val (scaledW, scaledH) = scaledRenderSize(targetW, targetH, cfg.renderResolutionScale)
                 val ai = aiBackendArgs(cfg)
-                runCatching { NativeBridge.setPresentMode(cfg.presentMode.vkValue) }
                 val rc = runCatching {
                     NativeBridge.initContext(
                         cacheDir = cacheDir,

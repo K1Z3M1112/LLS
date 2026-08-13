@@ -117,7 +117,6 @@ class OverlayManager(private val ctx: Context) {
         wm.defaultDisplay.getRealMetrics(metrics)
         // Present mode is the single global presentation policy for the native
         // render loop. It is not derived from, or overridden by, display refresh.
-        runCatching { NativeBridge.setPresentMode(LsfgPreferences(ctx).load().presentMode.vkValue) }
 
         val screenW = metrics.widthPixels
         val screenH = metrics.heightPixels

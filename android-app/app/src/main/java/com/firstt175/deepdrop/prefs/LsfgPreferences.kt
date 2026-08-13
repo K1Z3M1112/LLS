@@ -295,7 +295,6 @@ class LsfgPreferences(ctx: Context) {
         .putString(KEY_OVERLAY_MODE, value.prefValue)
         .apply()
 
-    fun setPresentMode(value: PresentMode) = prefs.edit().putString(KEY_PRESENT_MODE, value.prefValue).apply()
 
     fun setPacingPreset(value: PacingPreset) = prefs.edit()
         .putString(KEY_PACING_PRESET, value.prefValue)

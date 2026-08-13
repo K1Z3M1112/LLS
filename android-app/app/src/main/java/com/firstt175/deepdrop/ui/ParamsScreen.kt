@@ -55,7 +55,6 @@ import com.firstt175.deepdrop.prefs.DrawerEdge
 import com.firstt175.deepdrop.prefs.FramegenBackend
 import com.firstt175.deepdrop.prefs.LsfgPreferences
 import com.firstt175.deepdrop.prefs.OverlayMode
-import com.firstt175.deepdrop.prefs.PresentMode
 import com.firstt175.deepdrop.session.AutoOverlayController
 import com.firstt175.deepdrop.session.NativeBridge
 import com.firstt175.deepdrop.ui.components.IconBadge
@@ -348,24 +347,11 @@ fun ParamsFrameGenPacingScreen(nav: NavHostController) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                listOf(
-                    PresentMode.MAILBOX to "MAILBOX",
-                ).forEach { (mode, label) ->
-                    FilterChip(
-                        selected = state.presentMode == mode,
-                        onClick = {
-                            prefs.setPresentMode(mode)
-                            runCatching { NativeBridge.setPresentMode(mode.vkValue) }
-                            refreshConfigState(prefs)
-                        },
-                        label = { Text(label) },
-                    )
-                }
-            }
+            Text(
+                text = "MAILBOX • HARD-CODED • NO FALLBACK",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
 
         TailNote()

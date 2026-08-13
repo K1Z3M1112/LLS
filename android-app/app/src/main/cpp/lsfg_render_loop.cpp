@@ -68,8 +68,6 @@ struct State {
 
     std::mutex mu;
     bool initialized = false;
-    // Global Vulkan presentation mode selected by the app: 0=IMMEDIATE, 1=MAILBOX, 2=FIFO.
-    std::atomic<int32_t> requestedPresentMode{1};
     bool performanceMode = false;
     bool framegenInitOk = false;  // tracks whether LSFG_3_1::initialize succeeded
     bool framegenFp16 = false;    // load IDs 304..351 (FP16 SPIR-V) instead of 353..400 (FP32 SPIR-V)
@@ -492,9 +490,8 @@ void destroySwapchain() {
     g.swap.format = VK_FORMAT_UNDEFINED;
 }
 
-// Build (or rebuild) the swapchain on the current outWindow. Returns true if
-// the WSI path is live after this call; false means the caller must fall back
-// to the CPU blit path for this session.
+// Build (or rebuild) the swapchain on the current outWindow. Returns true only
+// when the hard-coded MAILBOX WSI path is live. There is no presentation fallback.
 //
 // Safe to call multiple times; previous swapchain is torn down first.
 bool createSwapchain() {
@@ -509,7 +506,7 @@ bool createSwapchain() {
     if (g.outWindow == nullptr) return false;
     if (g.vk.instance == VK_NULL_HANDLE) return false;
     // Once the worker has produced any CPU buffer on this ANativeWindow
-    // (overlay clear, CPU blit fallback, etc.) the BufferQueue is locked to
+    // (any CPU producer, if present, etc.) the BufferQueue is locked to
     // a CPU producer and vkCreateAndroidSurfaceKHR will return
     // VK_ERROR_NATIVE_WINDOW_IN_USE_KHR (-1000000001) on Mali / many other
     // drivers. Don't even attempt — failed surface creation has been observed
@@ -564,7 +561,7 @@ bool createSwapchain() {
             g.vk.computeFamilyIdx, g.swap.surface, &canPresent);
     LOGI("createSwapchain: surfaceSupport rc=%d canPresent=%d", (int)suppr, (int)canPresent);
     if (suppr != VK_SUCCESS || canPresent != VK_TRUE) {
-        LOGW("compute queue family %u cannot present on this surface — fall back to CPU blit",
+        LOGE("compute queue family %u cannot present on this surface — MAILBOX presentation unavailable",
              g.vk.computeFamilyIdx);
         destroySwapchain();
         return false;
@@ -602,13 +599,10 @@ bool createSwapchain() {
         chosen = {VK_FORMAT_R8G8B8A8_UNORM, VK_COLORSPACE_SRGB_NONLINEAR_KHR};
     }
 
-    // Use exactly the globally selected Vulkan present mode. No implicit
-    // FIFO/MAILBOX/IMMEDIATE fallback is performed: if the selected mode is not
-    // advertised by the surface, this WSI path is rejected for the surface.
-    // MAILBOX is the only presentation mode used by the application.
-    // FIFO/IMMEDIATE are not selectable and there is no present-mode fallback.
-    const int32_t requestedMode = 1;
-    const VkPresentModeKHR presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+    // HARD-CODED presentation policy: MAILBOX only.
+    // FIFO and IMMEDIATE are never selected and there is no mode fallback.
+    // If MAILBOX is not advertised, this presentation path stays disabled.
+    constexpr VkPresentModeKHR presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 
     uint32_t presentModeCount = 0;
     if (g.vk.pfnGetPhysicalDeviceSurfacePresentModesKHR != nullptr &&
@@ -626,8 +620,7 @@ bool createSwapchain() {
                 }
             }
             if (!selectedAvailable) {
-                LOGW("selected Vulkan present mode %d is unsupported by surface — WSI disabled; no mode fallback",
-                     requestedMode);
+                LOGE("hard-coded MAILBOX present mode is unsupported by surface — presentation disabled");
                 destroySwapchain();
                 return false;
             }
@@ -733,12 +726,8 @@ bool createSwapchain() {
     g.swap.format = chosen.format;
     g.swap.acquireCursor = 0;
     g.swap.outOfDate = false;
-    const char *modeName =
-        presentMode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE" :
-        presentMode == VK_PRESENT_MODE_FIFO_KHR ? "FIFO" : "MAILBOX";
-    LOGI("Swapchain ready: %ux%u fmt=%d images=%u mode=%s",
-         extent.width, extent.height, (int)chosen.format, realCount,
-         modeName);
+    LOGI("Swapchain ready: %ux%u fmt=%d images=%u mode=MAILBOX",
+         extent.width, extent.height, (int)chosen.format, realCount);
     return true;
 }
 
@@ -1243,7 +1232,7 @@ bool blitOutputToWindow(const AhbImage &out) {
     if (g.outWindow == nullptr || out.ahb == nullptr) return false;
 
     if (!kEnableWsiSwapchain || !g.vk.hasSwapchain || g.swap.disabledForSession) {
-        LOGW("blit dropped: WSI swapchain unavailable on this surface (no fallback)");
+        LOGE("MAILBOX presentation unavailable on this surface; frame not submitted");
         return false;
     }
 
@@ -1258,7 +1247,7 @@ bool blitOutputToWindow(const AhbImage &out) {
     if (g.swap.swapchain == VK_NULL_HANDLE) {
         if (!createSwapchain()) {
             g.swap.disabledForSession = true;
-            LOGW("blit dropped: createSwapchain failed on this surface (no fallback)");
+            LOGE("MAILBOX swapchain creation failed; frame not submitted");
             return false;
         }
     }
@@ -1266,7 +1255,7 @@ bool blitOutputToWindow(const AhbImage &out) {
         recordOverlayPost();
         return true;
     }
-    LOGW("blit dropped: blitOutputToSwapchain failed (no fallback)");
+    LOGE("MAILBOX blit/present failed; frame not submitted");
     return false;
 }
 
@@ -2439,16 +2428,6 @@ bool getFpsSnapshot(float *out, uint32_t cap) {
 
 void setBypass(bool bypass) {
     g.bypass.store(bypass, std::memory_order_relaxed);
-}
-
-void setPresentMode(int32_t mode) {
-    // Compatibility API: only MAILBOX is valid.
-    if (mode != 1) {
-        LOGW("Ignoring non-MAILBOX present mode=%d; MAILBOX is fixed", mode);
-        return;
-    }
-    std::lock_guard<std::mutex> lock(g.mu);
-    g.requestedPresentMode.store(1, std::memory_order_relaxed);
 }
 
 

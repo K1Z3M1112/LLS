@@ -240,8 +240,6 @@ object NativeBridge {
      */
     external fun setBypass(bypass: Boolean)
 
-    /** Selects the Vulkan present mode globally for all render-loop swapchains: 0=IMMEDIATE, 1=MAILBOX, 2=FIFO. */
-    external fun setPresentMode(mode: Int)
 
     /**
      * Hot-apply pacing parameters to the running render loop without tearing

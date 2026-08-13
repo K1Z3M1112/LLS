@@ -664,50 +664,12 @@ class SettingsDrawerOverlay(
             alpha = 0.75f
             setPadding(0, dp(4), 0, dp(8))
         })
-        val presentItems = listOf(
-            com.firstt175.deepdrop.prefs.PresentMode.MAILBOX to "MAILBOX",
-        )
-        val presentButtons = mutableListOf<Button>()
-        fun paintPresentButtons(selected: com.firstt175.deepdrop.prefs.PresentMode) {
-            presentButtons.forEachIndexed { i, btn ->
-                val isSel = presentItems[i].first == selected
-                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
-                (btn.background as? GradientDrawable)?.setColor(
-                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
-                )
-            }
-        }
-        val presentRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        presentationSection.addView(TextView(ctx).apply {
+            text = "MAILBOX  •  HARD-CODED  •  NO FALLBACK"
+            setTextColor(COLOR_PRIMARY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setPadding(0, dp(4), 0, dp(8))
-        }
-        presentItems.forEach { (mode, label) ->
-            val btn = Button(ctx).apply {
-                text = label
-                isAllCaps = false
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dp(3).toFloat()
-                }
-                setPadding(dp(4), dp(4), dp(4), dp(4))
-                setOnClickListener {
-                    prefs.setPresentMode(mode)
-                    runCatching { NativeBridge.setPresentMode(mode.vkValue) }
-                    paintPresentButtons(mode)
-                }
-            }
-            presentButtons.add(btn)
-            presentRow.addView(btn, LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-            ).apply {
-                leftMargin = dp(2)
-                rightMargin = dp(2)
-            })
-        }
-        presentationSection.addView(presentRow)
-        paintPresentButtons(initial.presentMode)
+        })
 
         panel.addView(divider())
 

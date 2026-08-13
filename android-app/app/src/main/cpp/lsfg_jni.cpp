@@ -343,11 +343,6 @@ Java_com_firstt175_deepdrop_session_NativeBridge_setBypass(
     lsfg_android::setBypass(bypass == JNI_TRUE);
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_firstt175_deepdrop_session_NativeBridge_setPresentMode(
-        JNIEnv * /*env*/, jobject /*thiz*/, jint mode) {
-    lsfg_android::setPresentMode(static_cast<int32_t>(mode));
-}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_firstt175_deepdrop_session_NativeBridge_setPacingParams(

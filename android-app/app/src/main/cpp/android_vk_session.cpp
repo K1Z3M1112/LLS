@@ -268,8 +268,8 @@ int create_session(VulkanSession &out) {
                 hasSwapchainDevExt = true;
             }
         } else {
-            // Robustness2 has a dedicated INFO message below explaining the
-            // automatic fallback path; don't double-log it as a warning.
+            // Robustness2 has a dedicated INFO message below; keep this unrelated
+            // optional-extension diagnostic separate from presentation mode.
             if (std::strcmp(opt, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME) != 0) {
                 LOGW("Optional extension %s not available", opt);
             }
@@ -277,7 +277,7 @@ int create_session(VulkanSession &out) {
     }
     out.hasSwapchain = hasSurfaceExts && hasSwapchainDevExt;
     if (!out.hasSwapchain) {
-        LOGW("WSI path disabled (surface=%d, swapchain=%d); falling back to CPU blit for output",
+        LOGE("MAILBOX WSI unavailable (surface=%d, swapchain=%d); presentation path is disabled",
              (int)hasSurfaceExts, (int)hasSwapchainDevExt);
     }
 
