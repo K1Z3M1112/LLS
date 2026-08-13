@@ -184,13 +184,10 @@ enum class PacingPreset(val prefValue: String) {
 }
 
 enum class PresentMode(val prefValue: String, val vkValue: Int) {
-    IMMEDIATE("immediate", 0),
-    MAILBOX("mailbox", 1),
-    FIFO("fifo", 2);
+    MAILBOX("mailbox", 1);
 
     companion object {
-        fun fromPref(value: String?): PresentMode =
-            values().firstOrNull { it.prefValue == value } ?: MAILBOX
+        fun fromPref(value: String?): PresentMode = MAILBOX
     }
 }
 
