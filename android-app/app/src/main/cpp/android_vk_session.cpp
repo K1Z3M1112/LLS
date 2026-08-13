@@ -188,12 +188,15 @@ int create_session(VulkanSession &out) {
             vkGetInstanceProcAddr(out.instance, "vkGetPhysicalDeviceSurfaceFormatsKHR"));
         out.pfnGetPhysicalDeviceSurfaceSupportKHR = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>(
             vkGetInstanceProcAddr(out.instance, "vkGetPhysicalDeviceSurfaceSupportKHR"));
+        out.pfnGetPhysicalDeviceSurfacePresentModesKHR = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfacePresentModesKHR>(
+            vkGetInstanceProcAddr(out.instance, "vkGetPhysicalDeviceSurfacePresentModesKHR"));
 
         if (out.pfnCreateAndroidSurfaceKHR != nullptr &&
             out.pfnDestroySurfaceKHR != nullptr &&
             out.pfnGetPhysicalDeviceSurfaceCapabilitiesKHR != nullptr &&
             out.pfnGetPhysicalDeviceSurfaceFormatsKHR != nullptr &&
-            out.pfnGetPhysicalDeviceSurfaceSupportKHR != nullptr) {
+            out.pfnGetPhysicalDeviceSurfaceSupportKHR != nullptr &&
+            out.pfnGetPhysicalDeviceSurfacePresentModesKHR != nullptr) {
             LOGI("vkCreateAndroidSurfaceKHR and related WSI functions resolved and cached on session");
         } else {
             LOGW("WSI surface functions unresolvable on this driver — disabling WSI");

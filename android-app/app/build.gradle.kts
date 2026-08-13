@@ -5,16 +5,16 @@ plugins {
 }
 
 android {
-    namespace = "com.lsfg.android"
+    namespace = "com.firstt175.deepdrop"
     compileSdk = 35
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
-        applicationId = "com.lsfg.android"
+        applicationId = "com.firstt175.deepdrop"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.2"
+        versionCode = 2
+        versionName = "0.1.3"
 
         // ABI filtering is handled by the splits { abi } block below (which
         // both restricts the build set to arm64-v8a/x86_64 and emits per-ABI
@@ -34,7 +34,12 @@ android {
                     "-fdata-sections"
                 )
                 arguments += listOf(
-                    "-DANDROID_STL=c++_shared",
+                    // Only one .so is produced (lsfg-android), so statically
+                    // linking libc++ avoids packaging a separate
+                    // libc++_shared.so per ABI. Combined with gc-sections it
+                    // pulls in only the libc++ symbols actually referenced,
+                    // shrinking total installed size vs the shared runtime.
+                    "-DANDROID_STL=c++_static",
                     "-DANDROID_PLATFORM=android-29",
                     "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--gc-sections,--icf=safe"
                 )
@@ -94,7 +99,7 @@ android {
             val relCfg = signingConfigs.getByName("release")
             signingConfig = if (relCfg.storeFile != null) relCfg else signingConfigs.getByName("debug")
             // ThinLTO: cross-TU inlining between lsfg_render_loop.cpp, framegen,
-            // dxbc and volk. NDK r27 supports it stably. Release-only because
+            // and volk. NDK r27 supports it stably. Release-only because
             // LTO link times are noticeably slower.
             externalNativeBuild {
                 cmake {
@@ -149,6 +154,9 @@ dependencies {
     implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("com.github.topjohnwu.libsu:core:5.3.0")
     implementation("com.github.topjohnwu.libsu:service:5.3.0")
+    // GIF decoding/playback for the animated YouTube-channel avatar on the Credits screen.
+    implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("io.coil-kt:coil-gif:2.6.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
