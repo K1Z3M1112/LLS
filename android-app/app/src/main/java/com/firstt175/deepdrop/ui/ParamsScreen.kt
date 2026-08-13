@@ -354,8 +354,6 @@ fun ParamsFrameGenPacingScreen(nav: NavHostController) {
             ) {
                 listOf(
                     PresentMode.MAILBOX to "MAILBOX",
-                    PresentMode.IMMEDIATE to "IMMEDIATE",
-                    PresentMode.FIFO to "FIFO",
                 ).forEach { (mode, label) ->
                     FilterChip(
                         selected = state.presentMode == mode,
