@@ -27,9 +27,9 @@
 #include <condition_variable>
 #include <cstring>
 #include <cmath>
+#include <deque>
 #include <functional>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -223,33 +223,16 @@ struct State {
 
 
 
-    // Single-slot mailbox for the next frame to process. We acquire a ref on
-    // the AHB so it survives beyond the caller's Image.close(). Drained by
-    // the worker thread.
-    //
-    // This is intentionally NOT a FIFO queue. A multi-frame backlog (the
-    // previous design allowed up to queueDepth=6) meant a burst of captures
-    // could sit unconsumed for hundreds of ms before the worker got to them,
-    // and when the backlog overflowed we silently dropped whichever frame
-    // was at the front — an explicit "skip" path that hurt continuity for
-    // no benefit, since a frame that old was already too stale to matter.
-    //
-    // With a single mailbox slot there is nothing to skip: at most one
-    // not-yet-picked-up frame ever exists. If a newer capture arrives before
-    // the worker has taken the previous one, the previous one is replaced
-    // (and its AHB ref released) immediately — but that's always safe,
-    // because a frame sitting in `latest` has never been imported/used by
-    // the GPU pipeline yet (only pushFrame and workerThread touch it, both
-    // under `mu`, and workerThread removes it from the slot before doing
-    // anything with it). So we never discard a frame that's mid-flight —
-    // only ones that were never used at all — while always handing the
-    // worker the freshest capture available.
+    // Unbounded FIFO for captured frames. Every frame handed to pushFrame()
+    // is retained until the worker processes it; there is no latest-frame
+    // replacement, overflow drop, filtering, or frame-rate gate here.
+    // AHardwareBuffer refs keep each input alive after Image.close() returns.
     struct PendingFrame {
         AHardwareBuffer *ahb = nullptr;
         Clock::time_point queuedAt{};
         int64_t captureTimestampNs = 0;
     };
-    std::optional<PendingFrame> latest;
+    std::deque<PendingFrame> pendingFrames;
     std::condition_variable pendingCv;
     bool stopRequested = false;
 
@@ -1596,19 +1579,6 @@ void workerThread() {
 
     // The GPU swapchain owns presentation; no CPU-side surface clear or pixel
     // copy is performed in the hot path.
-    // Drain any frames that were buffered during shader compilation.  Those
-    // frames were captured while the overlay may have been dark (stale content
-    // from a prior session), so feeding them into framegen would re-seed the
-    // feedback loop.  Drop them now that we have posted a transparent clear.
-    {
-        std::unique_lock<std::mutex> lock(g.mu);
-        if (g.latest.has_value()) {
-            LOGI("workerThread: draining stale init frame");
-            if (g.latest->ahb) AHardwareBuffer_release(g.latest->ahb);
-            g.latest.reset();
-        }
-    }
-
     // LSFG's present API currently does not require output semaphores from
     // this Android bridge. Keep one reusable empty vector instead of constructing
     // a temporary vector on every frame.
@@ -1618,10 +1588,10 @@ void workerThread() {
         State::PendingFrame pendingFrame{};
         {
             std::unique_lock<std::mutex> lock(g.mu);
-            g.pendingCv.wait(lock, []{ return g.stopRequested || g.latest.has_value(); });
-            if (g.stopRequested && !g.latest.has_value()) return;
-            pendingFrame = *g.latest;
-            g.latest.reset();
+            g.pendingCv.wait(lock, []{ return g.stopRequested || !g.pendingFrames.empty(); });
+            if (g.stopRequested && g.pendingFrames.empty()) return;
+            pendingFrame = g.pendingFrames.front();
+            g.pendingFrames.pop_front();
         }
         const auto frameWorkStartedAt = State::Clock::now();
         prof.queueNs += std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -2195,25 +2165,13 @@ void pushFrame(AHardwareBuffer *ahb, int64_t timestampNs) {
             AHardwareBuffer_release(ahb);
             return;
         }
-        // Mailbox, not a FIFO: at most one not-yet-picked-up frame waits here.
-        // If the worker hasn't taken the previous capture yet, that frame was
-        // never fed to framegen — it was never imported, never copied into an
-        // input slot, never touched by the GPU — so releasing it now is safe
-        // and loses nothing that was ever "used". We replace it with the
-        // freshest capture immediately rather than letting a backlog build:
-        // a multi-frame backlog is what used to force an explicit drop-the-
-        // oldest step once it saturated, which is the skip/drop behaviour we
-        // no longer want. Every frame that IS handed to the worker (see
-        // workerThread's pop below) runs the full pipeline — nothing is ever
-        // skipped mid-flight once it's been picked up.
-        if (g.latest.has_value()) {
-            AHardwareBuffer_release(g.latest->ahb);
-        }
-        g.latest = State::PendingFrame{
+        // FIFO input: never replace, filter, or discard a captured frame.
+        // The worker consumes frames strictly in arrival order.
+        g.pendingFrames.push_back(State::PendingFrame{
             .ahb = ahb,
             .queuedAt = State::Clock::now(),
             .captureTimestampNs = timestampNs,
-        };
+        });
     }
     g.pendingCv.notify_one();
 }
@@ -2228,10 +2186,10 @@ void shutdownRenderLoop() {
 
     {
         std::lock_guard<std::mutex> lock(g.mu);
-        if (g.latest.has_value()) {
-            AHardwareBuffer_release(g.latest->ahb);
-            g.latest.reset();
+        for (auto &pending : g.pendingFrames) {
+            if (pending.ahb) AHardwareBuffer_release(pending.ahb);
         }
+        g.pendingFrames.clear();
 
         if (g.framegenCtxId >= 0) {
             try {
