@@ -185,8 +185,8 @@ class SettingsDrawerOverlay(
         handleWidthPx = dp(5)
         handleHeightPx = dp(68)
         iconSizePx = dp(48)
-        panelWidthPx = minOf(dp(340), (screenW * 0.85f).toInt())
-        panelHeightPx = minOf(dp(340), (screenH * 0.85f).toInt())
+        panelWidthPx = minOf(dp(430), (screenW * 0.92f).toInt())
+        panelHeightPx = minOf(dp(620), (screenH * 0.92f).toInt())
         panelMarginPx = dp(12)
         drawerEdge = prefs.drawerEdge
         // Initial icon position: stick it to the right edge, vertically centred.
@@ -353,7 +353,7 @@ class SettingsDrawerOverlay(
         // Outer container holds the rounded panel plus a small floating margin on the right
         // so the panel does not touch the screen edge (gives it a card/sheet feel).
         val container = FrameLayout(ctx).apply {
-            setPadding(0, panelMarginPx, panelMarginPx, panelMarginPx)
+            setPadding(0, panelMarginPx, dp(8), panelMarginPx)
             isClickable = true // absorb taps so they don't bubble to scrim
         }
 
@@ -366,21 +366,21 @@ class SettingsDrawerOverlay(
 
         val panel = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(20), dp(20), dp(20))
+            setPadding(dp(18), dp(16), dp(18), dp(86))
         }
 
         // Header — brand mark + large bold title + close, Quick-Settings style.
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(4))
+            setPadding(0, 0, 0, dp(8))
         }
         header.addView(brandMark())
         header.addView(
             TextView(ctx).apply {
-                text = "LSFG-Android+"
+                text = "LSFG // CONTROL CONSOLE"
                 setTextColor(COLOR_ON_SURFACE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                 typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
                 val lp = LinearLayout.LayoutParams(
                     0,
@@ -394,7 +394,7 @@ class SettingsDrawerOverlay(
             setImageDrawable(crossDrawable())
             val sz = dp(36)
             layoutParams = LinearLayout.LayoutParams(sz, sz)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setPadding(dp(7), dp(7), dp(7), dp(7))
             isClickable = true
             isFocusable = true
             setOnClickListener { animateTo(0f) }
@@ -402,7 +402,17 @@ class SettingsDrawerOverlay(
         header.addView(closeBtn)
         panel.addView(header)
 
-        panel.addView(sectionSpacer(18))
+        panel.addView(TextView(ctx).apply {
+            text = "REALTIME RENDER / VULKAN / FRAME GENERATION"
+            setTextColor(COLOR_ON_SURFACE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            alpha = 0.55f
+            letterSpacing = 0.10f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(0, 0, 0, dp(10))
+        })
+
+        panel.addView(sectionSpacer(8))
         buildQuickControlsSection(panel)
         panel.addView(sectionSpacer(4))
         panel.addView(divider())
@@ -581,6 +591,9 @@ class SettingsDrawerOverlay(
         ) {
             Log.i(TAG, "live: gpuPostProcessing=$it")
             prefs.setGpuPostProcessing(it)
+            // Baked into NativeBridge.initContext (see LsfgForegroundService), so
+            // like performance/HDR/FP16 above this needs the batched Apply reinit.
+            markParamsDirty()
         })
 
         if (initial.gpuPostProcessing) {
@@ -622,6 +635,9 @@ class SettingsDrawerOverlay(
             ) {
                 Log.i(TAG, "live: npuPostProcessing=$it")
                 prefs.setNpuPostProcessing(it)
+                // Baked into NativeBridge.initContext (see LsfgForegroundService), so
+                // like performance/HDR/FP16 above this needs the batched Apply reinit.
+                markParamsDirty()
             })
         }
 
@@ -632,6 +648,9 @@ class SettingsDrawerOverlay(
         ) {
             Log.i(TAG, "live: cpuPostProcessing=$it")
             prefs.setCpuPostProcessing(it)
+            // Baked into NativeBridge.initContext (see LsfgForegroundService), so
+            // like performance/HDR/FP16 above this needs the batched Apply reinit.
+            markParamsDirty()
         })
 
         panel.addView(divider())
@@ -641,7 +660,7 @@ class SettingsDrawerOverlay(
         presentationSection.addView(TextView(ctx).apply {
             text = "One global present mode is used by every render-loop swapchain. No software frame pacing or refresh-rate control."
             setTextColor(COLOR_ON_SURFACE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             alpha = 0.75f
             setPadding(0, dp(4), 0, dp(8))
         })
@@ -672,7 +691,7 @@ class SettingsDrawerOverlay(
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dp(10).toFloat()
+                    cornerRadius = dp(3).toFloat()
                 }
                 setPadding(dp(4), dp(4), dp(4), dp(4))
                 setOnClickListener {
@@ -718,14 +737,14 @@ class SettingsDrawerOverlay(
         panel.addView(sectionSpacer(20))
 
         val stopBtn = Button(ctx).apply {
-            text = "End session"
+            text = "END SESSION"
             setTextColor(COLOR_STOP_TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 setColor(COLOR_STOP_BG)
-                cornerRadius = dp(14).toFloat()
+                cornerRadius = dp(3).toFloat()
                 setStroke(dp(1), COLOR_STOP_STROKE)
             }
             setPadding(0, dp(14), 0, dp(14))
@@ -768,7 +787,7 @@ class SettingsDrawerOverlay(
      */
     private fun buildApplyBar(): View {
         val bar = FrameLayout(ctx).apply {
-            setPadding(dp(16), dp(10), dp(16), dp(10))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 setColor(COLOR_PANEL_BG)
@@ -776,7 +795,7 @@ class SettingsDrawerOverlay(
             alpha = 0.5f
         }
         val btn = Button(ctx).apply {
-            text = "Apply changes"
+            text = "APPLY CHANGES"
             isEnabled = false
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -784,7 +803,7 @@ class SettingsDrawerOverlay(
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 setColor(COLOR_PRIMARY)
-                cornerRadius = dp(14).toFloat()
+                cornerRadius = dp(3).toFloat()
             }
             setPadding(0, dp(14), 0, dp(14))
             stateListAnimator = null
@@ -975,8 +994,8 @@ class SettingsDrawerOverlay(
         // Recompute size-dependent dimensions. dp(...) is density-relative so
         // it's stable across rotations, but the screen-percentage clamps on
         // panel size are not.
-        panelWidthPx = minOf(dp(340), (screenW * 0.85f).toInt())
-        panelHeightPx = minOf(dp(340), (screenH * 0.85f).toInt())
+        panelWidthPx = minOf(dp(430), (screenW * 0.92f).toInt())
+        panelHeightPx = minOf(dp(620), (screenH * 0.92f).toInt())
 
         // ICON_BUTTON: clamp the icon back inside the new screen bounds so it
         // stays visible after a rotation that shrank the relevant axis.
@@ -1079,20 +1098,21 @@ class SettingsDrawerOverlay(
     }
 
     private fun buildPanelBackground(): android.graphics.drawable.Drawable {
+        // Flat, squared-off console shell. Keep the shadow/stroke subtle so the
+        // panel reads like a dedicated in-game control console rather than a
+        // Material quick-settings card.
         val shadow = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            setColor(0x66000000.toInt())
-            cornerRadius = dp(24).toFloat()
+            setColor(0x55000000.toInt())
+            cornerRadius = dp(4).toFloat()
         }
         val body = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             setColor(COLOR_PANEL_BG)
-            cornerRadius = dp(24).toFloat()
+            cornerRadius = dp(4).toFloat()
             setStroke(dp(1), COLOR_PANEL_STROKE)
         }
         val layers = LayerDrawable(arrayOf(shadow, body))
-        // Offset the body slightly upward so the shadow peeks at the bottom edge for a
-        // floating/elevated look without any hardware shadow config.
         layers.setLayerInset(0, 0, 0, 0, 0)
         layers.setLayerInset(1, 0, 0, 0, dp(2))
         return layers
@@ -1245,7 +1265,7 @@ class SettingsDrawerOverlay(
             setTextColor(COLOR_PRIMARY)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             letterSpacing = 0.15f
-            typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+            typeface = android.graphics.Typeface.MONOSPACE
             layoutParams = LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f,
             )
@@ -1254,7 +1274,7 @@ class SettingsDrawerOverlay(
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(10), 0, dp(10))
+            setPadding(dp(10), dp(9), dp(8), dp(9))
             isClickable = true
             isFocusable = true
             // Subtle ripple on tap to hint at interactivity; stays on-brand because the body will
@@ -1366,7 +1386,7 @@ class SettingsDrawerOverlay(
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dp(10).toFloat()
+                    cornerRadius = dp(3).toFloat()
                 }
                 setPadding(dp(4), dp(4), dp(4), dp(4))
                 stateListAnimator = null
@@ -1418,7 +1438,7 @@ class SettingsDrawerOverlay(
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 setColor(COLOR_CHIP_BG)
-                cornerRadius = dp(8).toFloat()
+                cornerRadius = dp(2).toFloat()
             }
             setPadding(dp(10), dp(3), dp(10), dp(3))
             addView(valueView)
@@ -1437,11 +1457,11 @@ class SettingsDrawerOverlay(
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(13), 0, dp(13))
+            setPadding(dp(10), dp(9), dp(6), dp(9))
         }
         val lbl = TextView(ctx).apply {
             setTextColor(COLOR_ON_SURFACE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             text = label
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
@@ -1762,11 +1782,11 @@ class SettingsDrawerOverlay(
         private const val COLOR_PRIMARY = 0xFFFF7A29.toInt()
         private const val COLOR_ACCENT_DEEP = 0xFFB23A12.toInt()
         private const val COLOR_ON_SURFACE = 0xFFECE6E1.toInt()
-        private const val COLOR_PANEL_BG = 0xF014100C.toInt()
-        private const val COLOR_PANEL_STROKE = 0x33FF7A29
-        private const val COLOR_DIVIDER = 0x1AFFFFFF
-        private const val COLOR_TRACK_BG = 0xFF2E251F.toInt()
-        private const val COLOR_CHIP_BG = 0x33FF7A29
+        private const val COLOR_PANEL_BG = 0xF00C0D0F.toInt()
+        private const val COLOR_PANEL_STROKE = 0x55FF7A29
+        private const val COLOR_DIVIDER = 0x26FFFFFF
+        private const val COLOR_TRACK_BG = 0xFF202328.toInt()
+        private const val COLOR_CHIP_BG = 0x22FFFFFF
         private const val COLOR_STOP_BG = 0xFF2A1210.toInt()
         private const val COLOR_STOP_STROKE = 0x66FF6B5B.toInt()
         private const val COLOR_STOP_TEXT = 0xFFFF6B5B.toInt()
