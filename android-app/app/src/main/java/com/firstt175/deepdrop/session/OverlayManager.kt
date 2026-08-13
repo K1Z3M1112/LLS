@@ -163,23 +163,6 @@ class OverlayManager(private val ctx: Context) {
                 layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             }
-            // Keep the overlay on the display's highest supported refresh mode.
-            // This is a display-pacing hint, not an app-side FPS limiter and does
-            // not alter the selected Vulkan present mode. It prevents Android's
-            // adaptive-refresh policy from bouncing the full-screen output between
-            // 60/90/120 Hz while LSFG is continuously producing frames.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                runCatching {
-                    val modes = wm.defaultDisplay.supportedModes
-                    val best = modes.maxByOrNull { it.refreshRate }
-                    if (best != null && best.refreshRate > 0f) {
-                        preferredRefreshRate = best.refreshRate
-                        Log.i(TAG, "Preferred display refresh=${best.refreshRate}Hz mode=${best.modeId}")
-                    }
-                }.onFailure {
-                    Log.d(TAG, "Preferred display mode unavailable: ${it.message}")
-                }
-            }
             @Suppress("DEPRECATION")
             systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                     or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
@@ -614,15 +597,6 @@ class OverlayManager(private val ctx: Context) {
             removeMethod.invoke(host.viewTreeObserver, listener)
         }.onFailure { Log.w(TAG, "removeOnComputeInternalInsetsListener failed", it) }
     }
-
-    /**
-     * Requests the display's highest supported refresh rate for this continuously-fed
-     * game-like output surface. This is only a SurfaceFlinger hint/policy request;
-     * it NEVER paces, sleeps, or caps the native render loop. The render worker can
-     * publish as fast as the GPU pipeline allows. The request is repeated only on
-     * surface creation/resize, never from the per-frame path.
-     */
-
 
     private fun syncOverlayGeometry() {
         val wm = hostWindowManager ?: return
