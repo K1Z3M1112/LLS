@@ -12,6 +12,12 @@
 
 using namespace LSFG::Core;
 
+VkExternalSemaphoreHandleTypeFlagBits Semaphore::externalFdHandleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+void Semaphore::setExternalFdHandleType(VkExternalSemaphoreHandleTypeFlagBits type) noexcept {
+    externalFdHandleType = type;
+}
+
 Semaphore::Semaphore(const Core::Device& device, std::optional<uint32_t> initial) {
     // create semaphore
     const VkSemaphoreTypeCreateInfo typeInfo{
@@ -39,14 +45,13 @@ Semaphore::Semaphore(const Core::Device& device, std::optional<uint32_t> initial
 }
 
 Semaphore::Semaphore(const Core::Device& device, int fd) {
-    // create semaphore
-    const VkExportSemaphoreCreateInfo exportInfo{
-        .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
-        .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT
-    };
+    // Imported external-FD semaphores must be created as ordinary binary
+    // semaphores first. The external handle is attached by
+    // vkImportSemaphoreFdKHR; advertising export capability here is not
+    // required for the import path and can reject the create on drivers that
+    // expose import but not export for this handle type.
     const VkSemaphoreCreateInfo desc{
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-        .pNext = &exportInfo
     };
     VkSemaphore semaphoreHandle{};
     auto res = vkCreateSemaphore(device.handle(), &desc, nullptr, &semaphoreHandle);
@@ -60,7 +65,11 @@ Semaphore::Semaphore(const Core::Device& device, int fd) {
     const VkImportSemaphoreFdInfoKHR importInfo{
         .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
         .semaphore = semaphoreHandle,
-        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+        .flags = static_cast<VkSemaphoreImportFlags>(
+            externalFdHandleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT
+                ? VK_SEMAPHORE_IMPORT_TEMPORARY_BIT
+                : 0u),
+        .handleType = externalFdHandleType,
         .fd = fd // closes the fd
     };
     res = vkImportSemaphoreFdKHR(device.handle(), &importInfo);

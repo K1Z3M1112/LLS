@@ -78,7 +78,7 @@ existing tree. Per-file summary:
 | `framegen/src/core/image.cpp` | Implementation of the AHB-backed `Image` constructor. |
 | `framegen/src/core/device.cpp` | Android variant of the device-extension list. Replaces `VK_KHR_external_memory_fd` + `VK_KHR_external_semaphore_fd` with `VK_ANDROID_external_memory_android_hardware_buffer`, `VK_KHR_external_memory`, `VK_KHR_sampler_ycbcr_conversion`, `VK_KHR_dedicated_allocation`, `VK_KHR_get_memory_requirements2`, `VK_KHR_bind_memory2`, `VK_KHR_maintenance1`. `VK_EXT_robustness2` stays mandatory on both targets. |
 | Top-level `CMakeLists.txt` | Minor build glue so the Android Studio project can pull `framegen/` in via `add_subdirectory()`. |
-| `thirdparty/` | Unchanged. Same `volk`, `pe-parse`, `dxbc`, `toml11` as upstream 1.0.0. The Android Studio project consumes `volk`, `pe-parse`, and `dxbc` directly from this branch. |
+| `thirdparty/` | `dxbc-to-spirv` removed (dead code — Lossless Scaling 3.2.2.0+ ships precompiled FP16/FP32 SPIR-V, so no DXBC translation step is needed). Same `volk`, `pe-parse`, `toml11` as upstream 1.0.0 otherwise. The Android Studio project consumes `volk` and `pe-parse` directly from this branch. |
 
 ### Public Android API at a glance
 

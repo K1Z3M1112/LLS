@@ -20,7 +20,11 @@ const std::vector<const char*> requiredExtensions = {
     "VK_KHR_external_memory_fd",
     "VK_KHR_external_semaphore_fd",
 #else
-    // On Android we share via AHardwareBuffer, not opaque FDs.
+    // Android image sharing uses AHardwareBuffer, but frame completion is
+    // synchronized across the host and framegen Vulkan devices with
+    // exportable/importable opaque-FD binary semaphores.
+    "VK_KHR_external_semaphore",
+    "VK_KHR_external_semaphore_fd",
     "VK_ANDROID_external_memory_android_hardware_buffer",
     "VK_KHR_external_memory",                  // base ext, dependency
     "VK_KHR_sampler_ycbcr_conversion",         // dependency of AHB ext

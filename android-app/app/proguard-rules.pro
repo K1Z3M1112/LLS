@@ -1,8 +1,8 @@
 # JNI symbol-discovery binding: the native side resolves Java methods by their
-# mangled symbol name (Java_com_lsfg_android_session_NativeBridge_xxx), so the
+# mangled symbol name (Java_com_firstt175_deepdrop_session_NativeBridge_xxx), so the
 # class FQN and every `external fun` must be preserved exactly. RegisterNatives
 # is NOT used.
--keep class com.lsfg.android.session.NativeBridge { *; }
+-keep class com.firstt175.deepdrop.session.NativeBridge { *; }
 -keepclasseswithmembernames class * {
     native <methods>;
 }
@@ -17,8 +17,8 @@
 -keep class * extends android.accessibilityservice.AccessibilityService
 
 # AIDL-generated stubs for Shizuku user-service IPC.
--keep class com.lsfg.android.shizuku.** { *; }
--keep interface com.lsfg.android.shizuku.** { *; }
+-keep class com.firstt175.deepdrop.shizuku.** { *; }
+-keep interface com.firstt175.deepdrop.shizuku.** { *; }
 
 # Shizuku API uses reflection / dynamic proxies for the manager service binder.
 -keep class rikka.shizuku.** { *; }
@@ -30,7 +30,7 @@
 # it by class name via reflection (Class.forName(...).newInstance()). The class
 # name is also passed to bindUserService through ComponentName, which uses the
 # obfuscated name. Keep both the class and its no-arg constructor verbatim.
--keep class com.lsfg.android.session.ShizukuCaptureUserService { *; }
+-keep class com.firstt175.deepdrop.session.ShizukuCaptureUserService { *; }
 
 # libsu spawns a remote root process and resolves classes by name across the IPC boundary.
 -keep class com.topjohnwu.superuser.** { *; }
@@ -39,8 +39,8 @@
 
 # RootCaptureService extends libsu's RootService and is instantiated by name in
 # the spawned root process. Same constraint as ShizukuCaptureUserService.
--keep class com.lsfg.android.session.RootCaptureService { *; }
--keep class com.lsfg.android.session.RootCaptureService$* { *; }
+-keep class com.firstt175.deepdrop.session.RootCaptureService { *; }
+-keep class com.firstt175.deepdrop.session.RootCaptureService$* { *; }
 
 # Compose runtime needs Signature/InnerClasses for state-handling reflection.
 -keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, SourceFile, LineNumberTable

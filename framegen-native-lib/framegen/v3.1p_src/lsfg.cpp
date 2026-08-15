@@ -69,6 +69,10 @@ int32_t LSFG_3_1P::createContext(
     return id;
 }
 
+void LSFG_3_1P::setExternalSemaphoreFdHandleType(VkExternalSemaphoreHandleTypeFlagBits type) {
+    Core::Semaphore::setExternalFdHandleType(type);
+}
+
 void LSFG_3_1P::presentContext(int32_t id, int inSem, const std::vector<int>& outSem) {
     if (!instance.has_value() || !device.has_value())
         throw LSFG::vulkan_error(VK_ERROR_INITIALIZATION_FAILED, "LSFG not initialized");

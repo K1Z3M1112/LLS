@@ -1,0 +1,175 @@
+#version 450
+
+// GPU-only scaler running the single-pass "sharp-bilinear-simple"
+// technique described by rsn8887 here:
+// https://gamingprojects.wordpress.com/2017/12/03/reducing-pixel-blur-and-distortion/
+//
+// The original technique is a two-pass point-then-linear prescale: point
+// filtering blows the source up by the largest integer factor that fits
+// (computed separately per axis, so vertical/horizontal-heavy content like
+// shmups isn't forced to share one factor), then a final linear pass
+// handles whatever fractional scale is left. That keeps every source pixel
+// a constant shape (no "pixel wobble") with only minimal blur - see the
+// blog post for the visual comparison against plain bilinear and plain
+// point filtering.
+//
+// This shader reproduces that result in one pass instead of two, using the
+// standard single-pass reformulation: for each destination pixel, snap the
+// sample point flat across the middle of its source texel (point filtering)
+// and only let it slide within a thin strip right at the texel boundary,
+// where it blends linearly with the neighbor. Two knobs make it tunable
+// beyond the blog's fixed version:
+//
+//   sharpness  - how much of the source pixel is that flat, point-filtered
+//                zone. 1.0 reproduces the blog's technique exactly (full
+//                integer snap - maximum crispness, zero wobble). 0.0
+//                collapses back to plain bilinear (maximum smoothness, no
+//                snapping at all). Values in between blend continuously.
+//   smoothness - how gently the blend ramps inside that boundary strip.
+//                0.0 is a straight linear ramp (the blog's technique).
+//                1.0 eases it with a smoothstep curve instead, which softens
+//                the corner where the flat zone meets the ramp - useful at
+//                non-integer scale factors where the hard corner can show
+//                up as faint banding.
+layout(local_size_x = 16, local_size_y = 8, local_size_z = 1) in;
+
+layout(rgba8, set = 0, binding = 0) readonly uniform image2D srcImg;
+layout(rgba8, set = 0, binding = 1) writeonly uniform image2D dstImg;
+
+layout(push_constant) uniform Params {
+    int srcW;
+    int srcH;
+    int dstW;
+    int dstH;
+    float sharpness;
+    float smoothness;
+    float pad0;
+    float pad1;
+} pc;
+
+// ---- Shared-memory tile ---------------------------------------------------
+//
+// Bilinear needs a 2x2 footprint; give it a 1px halo so the tile fast path
+// (used when src and dst are the same size, i.e. no scaling requested)
+// always has its neighbors on hand.
+#define TILE_HALO 1
+#define TILE_W    (16 + 2 * TILE_HALO)  // = 18
+#define TILE_H    ( 8 + 2 * TILE_HALO)  // = 10
+
+shared vec4 tile[TILE_W * TILE_H];
+shared bool  s_useTile;
+shared ivec2 s_tileOrigin;
+
+vec4 loadPxDirect(ivec2 p) {
+    p = clamp(p, ivec2(0), ivec2(pc.srcW - 1, pc.srcH - 1));
+    return imageLoad(srcImg, p);
+}
+
+vec4 loadPx(ivec2 p) {
+    if (s_useTile) {
+        ivec2 local = p - s_tileOrigin;
+        if (local.x >= 0 && local.y >= 0 && local.x < TILE_W && local.y < TILE_H) {
+            return tile[local.y * TILE_W + local.x];
+        }
+    }
+    return loadPxDirect(p);
+}
+
+void populateTile(ivec2 workgroupDstBase, vec2 scale) {
+    if (gl_LocalInvocationIndex == 0u) {
+        vec2 baseSrc = (vec2(workgroupDstBase) + vec2(0.5)) * scale - vec2(0.5);
+        s_tileOrigin = ivec2(floor(baseSrc)) - ivec2(TILE_HALO);
+    }
+    barrier();
+    memoryBarrierShared();
+
+    const int WG    = 16 * 8;
+    const int TOTAL = TILE_W * TILE_H;
+    int tid = int(gl_LocalInvocationIndex);
+    for (int i = tid; i < TOTAL; i += WG) {
+        int lx = i % TILE_W;
+        int ly = i / TILE_W;
+        ivec2 srcPx = s_tileOrigin + ivec2(lx, ly);
+        srcPx = clamp(srcPx, ivec2(0), ivec2(pc.srcW - 1, pc.srcH - 1));
+        tile[i] = imageLoad(srcImg, srcPx);
+    }
+    barrier();
+    memoryBarrierShared();
+}
+
+// ---- Reconstruction --------------------------------------------------------
+
+vec4 sampleBilinear(vec2 srcPos) {
+    vec2 p = srcPos - vec2(0.5);
+    ivec2 p0 = ivec2(floor(p));
+    vec2 f = fract(p);
+    vec4 a = loadPx(p0);
+    vec4 b = loadPx(p0 + ivec2(1, 0));
+    vec4 c = loadPx(p0 + ivec2(0, 1));
+    vec4 d = loadPx(p0 + ivec2(1, 1));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// "sharp-bilinear-simple" single-pass reconstruction, parametrized by
+// sharpness and smoothness (see header comment above).
+//
+// texel is the destination pixel's center mapped into source-texel space
+// (same convention as sampleBilinear's srcPos: integer N = the boundary
+// between texel N-1 and texel N, so texel centers sit at N + 0.5).
+vec4 sampleSharpBilinear(vec2 texel, float sharpness, float smoothness) {
+    vec2 srcSize = vec2(float(pc.srcW), float(pc.srcH));
+    vec2 dstSize = vec2(float(pc.dstW), float(pc.dstH));
+
+    // True integer prescale per axis (>=1), same as the blog's technique.
+    vec2 prescale = max(floor(dstSize / srcSize), vec2(1.0));
+    // sharpness blends the *effective* prescale between 1 (no snapping -
+    // plain bilinear) and the true integer prescale (full snap). At
+    // sharpness=1 this reduces exactly to the blog's fixed algorithm.
+    vec2 effPrescale = mix(vec2(1.0), prescale, clamp(sharpness, 0.0, 1.0));
+
+    vec2 texelFloored = floor(texel);
+    vec2 s = fract(texel);
+
+    // regionRange = half-width of the flat, point-filtered zone at the
+    // center of the source pixel; halfWidth = half-width of the boundary
+    // strip that blends into the neighbor. The two always add up to 0.5,
+    // i.e. exactly one source texel.
+    vec2 regionRange = vec2(0.5) - vec2(0.5) / effPrescale;
+    vec2 halfWidth = vec2(0.5) - regionRange; // = 0.5 / effPrescale
+
+    vec2 centerDist = s - vec2(0.5);
+    vec2 excess = centerDist - clamp(centerDist, -regionRange, regionRange);
+    vec2 rawT = clamp(abs(excess) / max(halfWidth, vec2(1e-6)), 0.0, 1.0);
+    vec2 easedT = mix(rawT, smoothstep(0.0, 1.0, rawT), clamp(smoothness, 0.0, 1.0));
+
+    vec2 f = vec2(0.5) + sign(excess) * easedT * vec2(0.5);
+    vec2 modTexel = texelFloored + f;
+    return sampleBilinear(modTexel);
+}
+
+void main() {
+    vec2 scale = vec2(float(pc.srcW) / float(pc.dstW), float(pc.srcH) / float(pc.dstH));
+
+    // Tile fast path only valid when the workgroup's source footprint stays
+    // inside TILE_W x TILE_H, i.e. scale close to 1:1. Anything further out
+    // (e.g. big upscale factors) falls back to direct imageLoad, same as
+    // before.
+    if (gl_LocalInvocationIndex == 0u) {
+        s_useTile = (pc.srcW == pc.dstW) && (pc.srcH == pc.dstH);
+    }
+    barrier();
+    memoryBarrierShared();
+
+    ivec2 workgroupDstBase = ivec2(gl_WorkGroupID.xy) * ivec2(gl_WorkGroupSize.xy);
+    if (s_useTile) {
+        populateTile(workgroupDstBase, scale);
+    }
+
+    ivec2 dst = ivec2(gl_GlobalInvocationID.xy);
+    if (dst.x >= pc.dstW || dst.y >= pc.dstH) return;
+
+    vec2 srcPos = (vec2(dst) + vec2(0.5)) * scale;
+    vec4 color = sampleSharpBilinear(srcPos, pc.sharpness, pc.smoothness);
+
+    imageStore(dstImg, dst, clamp(color, 0.0, 1.0));
+}

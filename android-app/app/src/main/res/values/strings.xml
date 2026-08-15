@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">DeepFG</string>
-    <string name="accessibility_service_label">DeepFG Touch Passthrough</string>
-    <string name="accessibility_service_description">Forwards touch events from the DeepFG overlay to the underlying app so you can interact with games while the frame-generation overlay is visible.</string>
+    <string name="app_name">LSFG-Android+</string>
+    <string name="credits_title">Credits</string>
+    <string name="credits_section_channel">Channel</string>
+    <string name="credits_section_base">Base project</string>
+    <string name="credits_section_license">License</string>
+    <string name="credits_license_body">Licensed under GNU GPL v3.0, inherited from the base project. Source is available on request; tap above for the full license text.</string>
+    <string name="accessibility_service_label">LSFG-Android+ Touch Passthrough</string>
+    <string name="accessibility_service_description">Forwards touch events from the LSFG-Android+ overlay to the underlying app so you can interact with games while the frame-generation overlay is visible.</string>
 
-    <string name="notif_channel_session">DeepFG Session</string>
-    <string name="notif_session_title">DeepFG session active</string>
+    <string name="notif_channel_session">LSFG-Android+ Session</string>
+    <string name="notif_session_title">LSFG-Android+ session active</string>
     <string name="notif_session_text">Frame generation overlay is running. Tap to stop.</string>
 
     <string name="legal_title">Legal notice</string>
@@ -23,26 +28,12 @@
     <string name="legal_accept">I own a Lossless Scaling license — continue</string>
     <string name="legal_decline">Cancel</string>
 
-    <string name="nav_home">Home</string>
     <string name="nav_dll">Select DLL</string>
-    <string name="nav_params">Parameters</string>
-    <string name="nav_frame_gen">Frame generation</string>
     <string name="nav_framegen_pacing">Frame generation &amp; pacing</string>
     <string name="nav_overlay_display">Overlay &amp; display</string>
-    <string name="nav_app">Target app</string>
-    <string name="nav_start">Start session</string>
-    <string name="nav_tutorial">Tutorial</string>
-    <string name="tutorial_subtitle">How to use DeepFG</string>
-    <string name="tutorial_intro">Follow these steps to get the most out of frame generation. Tap any screenshot to view it full size.</string>
-    <string name="tutorial_empty">Tutorial content will be added soon. Drop your screenshots in res/drawable-nodpi and reference them in TutorialScreen.kt.</string>
-    <string name="tutorial_prompt_title">View the tutorial?</string>
-    <string name="tutorial_prompt_body">Welcome to DeepFG! It is strongly recommended to read the tutorial before using the app — it walks you through accessibility permissions, loading Lossless.dll, picking a target app and the overlay menu.\n\nYou can always reopen the tutorial later from the Tutorial entry on the home screen.</string>
-    <string name="tutorial_prompt_view">View tutorial</string>
-    <string name="tutorial_prompt_skip">Skip for now</string>
 
     <!-- Section eyebrows -->
     <string name="section_frame_generation">Frame generation</string>
-    <string name="section_pacing">Pacing</string>
     <string name="section_overlay_mode">Overlay entry</string>
     <string name="section_overlay_handle">Overlay handle</string>
     <string name="param_overlay_mode">Overlay style</string>
@@ -56,7 +47,7 @@
     <string name="section_hud">HUD</string>
     <string name="section_trusted_overlay">Touch pass-through</string>
     <string name="param_trusted_overlay">Trusted overlay (Accessibility)</string>
-    <string name="param_trusted_overlay_desc">Hosts the overlay as a trusted accessibility surface so taps reach the app underneath on strict devices (e.g. Orange Pi 5 Ultra) where they would otherwise be blocked. Trade-off: while a session is running the overlay covers the status bar and navigation bar — you cannot pull down notifications or tap home/back. Leave OFF if your device passes taps already; turn ON only when you cannot tap through. Requires the DeepFG accessibility service to be enabled.</string>
+    <string name="param_trusted_overlay_desc">Hosts the overlay as a trusted accessibility surface so taps reach the app underneath on strict devices (e.g. Orange Pi 5 Ultra) where they would otherwise be blocked. Trade-off: while a session is running the overlay covers the status bar and navigation bar — you cannot pull down notifications or tap home/back. Leave OFF if your device passes taps already; turn ON only when you cannot tap through. Requires the LSFG-Android+ accessibility service to be enabled.</string>
     <string name="param_gesture_forwarding">Gesture forwarding fallback</string>
     <string name="param_gesture_forwarding_desc">Extra fallback for the rare device where taps still don\'t reach the game even with trusted overlay on. The accessibility service replays the touch directly instead of relying on pass-through. Only take this if trusted overlay alone didn\'t fix tapping — enabling it when pass-through already works can cause duplicate taps.</string>
     <string name="section_capture_mode">Capture mode</string>
@@ -68,9 +59,16 @@
     <string name="param_frame_graph_desc">Show a live plot of generated frame intervals in the overlay. Useful for diagnosing stutter.</string>
 
     <string name="dll_status_none">No Lossless.dll selected yet.</string>
-    <string name="dll_status_ready">Lossless.dll ready (%1$s).</string>
     <string name="dll_pick_button">Select Lossless.dll</string>
     <string name="dll_reextract_button">Re-extract shaders</string>
+
+    <string name="section_framegen_backend">FRAME-GEN BACKEND</string>
+    <string name="backend_lsfg_dll">Lossless.dll</string>
+    <string name="backend_ncnn_ai">AI model (ncnn)</string>
+    <string name="backend_desc">Lossless.dll runs the Vulkan LSFG shader pipeline. AI model (ncnn) runs the FlowNetLite/RefineNetLite interpolator you trained and exported from the notebook. Only the active backend\'s source needs to be ready to start a session.</string>
+
+    <string name="ai_model_test_load_button">Test model load</string>
+    <string name="ai_model_source_desc">rife-v4.25-lite_ensembleFalse ships built into the app (assets/models/) — there\'s nothing to pick or import. Precision is fixed at FP16, baked into the shipped weights; the toggle below only controls where inference runs (GPU vs CPU), not precision.</string>
 
     <string name="param_multiplier">Frame multiplier</string>
     <string name="param_multiplier_desc">Number of frames produced per real frame. 2 = one interpolated frame between each pair. 3–4 recommended on mobile.</string>
@@ -82,10 +80,8 @@
     <string name="param_performance_mode_desc">Use the faster, lower-quality shader variant. Recommended on mid-range GPUs.</string>
     <string name="param_hdr">HDR mode</string>
     <string name="param_hdr_desc">Enable only if your device and game output HDR.</string>
-    <string name="param_anti_artifacts">Anti-artifacts Mode</string>
-    <string name="param_anti_artifacts_desc">Suppress generated frames during very fast camera movement to reduce missing character parts and warping. Off by default.</string>
     <string name="param_framegen_fp16">FP16 frame-gen shaders</string>
-    <string name="param_framegen_fp16_desc">Use the half-precision shader variants pre-compiled inside Lossless.dll instead of the full-precision DXBC set. Reduces GPU load and memory bandwidth. Quality is virtually identical; falls back to FP32 automatically if anything goes wrong.</string>
+    <string name="param_framegen_fp16_desc">Use the half-precision shader variants pre-compiled inside Lossless.dll instead of the full-precision FP32 set. Reduces GPU load and memory bandwidth. Quality is virtually identical; falls back to FP32 automatically if anything goes wrong.</string>
     <string name="param_fps_counter">FPS counter on overlay</string>
     <string name="param_fps_counter_desc">Show a small FPS readout in the top-left of the overlay. MediaProjection counts visible capture frames; Shizuku capture counts privileged UID-filtered target frames.</string>
     <string name="param_drawer_edge">Drawer handle position</string>
@@ -95,13 +91,11 @@
     <string name="drawer_edge_top">Top</string>
     <string name="drawer_edge_bottom">Bottom</string>
 
-    <string name="app_picker_title">Select the target app</string>
-    <string name="app_picker_hint">Pick the game or app you want to apply frame generation to. It will be launched when you start the session.</string>
 
     <string name="nav_automatic_overlay">Automatic Overlay</string>
     <string name="automatic_overlay_title">Automatic Overlay</string>
-    <string name="automatic_overlay_hint">Pick the apps that should automatically show the DeepFG launcher when opened from the home screen. A small floating icon appears on top of the game; tap it to start the frame-generation overlay.</string>
-    <string name="automatic_overlay_a11y_required">Enable the DeepFG accessibility service so the app can detect when one of the selected games is opened.</string>
+    <string name="automatic_overlay_hint">Pick the apps that should automatically show the LSFG-Android+ launcher when opened from the home screen. A small floating icon appears on top of the game; tap it to start the frame-generation overlay.</string>
+    <string name="automatic_overlay_a11y_required">Enable the LSFG-Android+ accessibility service so the app can detect when one of the selected games is opened.</string>
     <string name="automatic_overlay_a11y_action">Open accessibility settings</string>
     <string name="automatic_overlay_count_zero">None — tap to add</string>
     <string name="automatic_overlay_count_n">%1$d apps configured</string>
@@ -109,43 +103,39 @@
     <string name="auto_overlay_sheet_activate">Activate frame-generation overlay</string>
     <string name="auto_overlay_sheet_disable">Disable Automatic Overlay for this app</string>
     <string name="auto_overlay_sheet_close">Close</string>
-    <string name="auto_overlay_sheet_intro">Tap to start the DeepFG capture session for this app. Android will ask you to confirm screen recording.</string>
+    <string name="auto_overlay_sheet_intro">Tap to start the LSFG-Android+ capture session for this app. Android will ask you to confirm screen recording.</string>
 
-    <string name="start_button">Start DeepFG session</string>
-    <string name="stop_button">Stop session</string>
+    <string name="session_button_start">START SESSION</string>
+    <string name="session_button_stop">STOP SESSION</string>
+    <string name="session_start_hint">Start a session from the Automatic Overlay handle below (step 4).</string>
+
+    <string name="language_menu_item">Language</string>
+    <string name="language_system">System default</string>
+    <string name="language_english">English</string>
+    <string name="language_thai">ไทย (Thai)</string>
+    <string name="language_apply">Apply</string>
+
+    <string name="credits_section_myproject">My project</string>
+    <string name="credits_section_libraries">Third-party libraries</string>
+    <string name="credits_free_notice_title">This app is 100% free</string>
+    <string name="credits_free_notice_body">LSFG-Android+ is free and open source (GPL v3.0) and always will be. If you paid money for this app — on a store listing, a Telegram/Discord seller, or anywhere else — that copy did not come from the developer and may be a modified or malicious build. Only get it from the official links on this page.</string>
+    <string name="credits_build_official">Verified official build</string>
+    <string name="credits_build_unofficial">Unofficial build — not signed by the original developer. Re-download from the official links above if you\'re unsure where this copy came from.</string>
 
     <string name="perm_overlay_missing">The overlay permission is required. Please grant "Display over other apps".</string>
-    <string name="perm_accessibility_missing">The DeepFG accessibility service must be enabled so touches pass through the overlay.</string>
-    <string name="perm_capture_denied">Screen capture was denied. DeepFG cannot run without it.</string>
+    <string name="perm_capture_denied">Screen capture was denied. LSFG-Android+ cannot run without it.</string>
 
     <string name="limitation_title">About this preview</string>
-    <string name="limitation_body">On non-rooted Android, DeepFG cannot be injected into another app\'s Vulkan context like on Linux. MediaProjection provides the standard capture path; Shizuku capture can use a privileged UID-filtered target path on supported builds and requires Shizuku with ADB or wireless debugging active. See the README for details.</string>
+    <string name="limitation_body">On non-rooted Android, LSFG-Android+ cannot be injected into another app\'s Vulkan context like on Linux. MediaProjection provides the standard capture path; Shizuku capture can use a privileged UID-filtered target path on supported builds and requires Shizuku with ADB or wireless debugging active. See the README for details.</string>
 
-    <string name="a11y_info">Optional. DeepFG renders at full opacity and forwards touches to the game without this service. Enable it only if you notice rendering issues on a specific device.</string>
 
-    <string name="crash_dialog_title">DeepFG crashed on last run</string>
+    <string name="crash_dialog_title">LSFG-Android+ crashed on last run</string>
     <string name="crash_dialog_body">A report was saved. You can share it with the developer to help debug the issue. Device and extension info is already included — no personal data is attached.</string>
     <string name="crash_dialog_share">Share report</string>
     <string name="crash_dialog_dismiss">Dismiss</string>
     <string name="crash_dialog_view">View</string>
     <string name="crash_export_log">Export diagnostic log</string>
+    <string name="battery_exempt_menu_item">Exempt from battery optimization</string>
     <string name="crash_export_none">No diagnostic log available yet — run a session first.</string>
 
-    <!-- Benchmark mode -->
-    <string name="benchmark_title">Benchmark Mode</string>
-    <string name="benchmark_home_button">Run benchmark</string>
-    <string name="benchmark_intro">Runs three back-to-back passes (multiplier ×2, ×3, ×4) with a fixed preset and produces a shareable report. Use this baseline before/after performance changes to measure deltas.</string>
-    <string name="benchmark_preset_summary">Flow scale 0.70 · Performance mode ON · Anti-artifacts OFF · Post-processing OFF · Vsync AUTO</string>
-    <string name="benchmark_duration_summary">Each run: 60 seconds sampling + 2 seconds warmup. Total ~3 minutes plus target-app launch.</string>
-    <string name="benchmark_dual_precision_summary">FP16 supported on this GPU — the benchmark will run twice (FP32 then FP16) for direct side-by-side numbers in the same report.</string>
-    <string name="benchmark_requires_target">Pick a target app first (in the Automatic Overlay screen).</string>
-    <string name="benchmark_start">Start benchmark</string>
-    <string name="benchmark_cancel">Cancel</string>
-    <string name="benchmark_share_report">Share last report</string>
-    <string name="benchmark_running_warmup">Warmup ×%1$d — %2$d s remaining</string>
-    <string name="benchmark_running_sampling">Run %1$d/%2$d — multiplier ×%3$d — %4$d s remaining</string>
-    <string name="benchmark_completed">Benchmark complete</string>
-    <string name="benchmark_completed_body">Report saved to %1$s. Use the share sheet to send it.</string>
-    <string name="benchmark_failed">Benchmark failed: %1$s</string>
-    <string name="benchmark_no_report">No report available yet — run a benchmark first.</string>
 </resources>

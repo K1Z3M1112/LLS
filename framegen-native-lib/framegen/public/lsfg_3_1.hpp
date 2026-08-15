@@ -80,6 +80,9 @@ namespace LSFG_3_1 {
     __attribute__((visibility("default")))
     void presentContext(int32_t id, int inSem, const std::vector<int>& outSem);
 
+    __attribute__((visibility("default")))
+    void setExternalSemaphoreFdHandleType(VkExternalSemaphoreHandleTypeFlagBits type);
+
     ///
     /// Delete an LSFG context.
     ///
