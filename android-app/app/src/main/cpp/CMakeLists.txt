@@ -35,12 +35,6 @@ target_include_directories(pe-parse PUBLIC "${PEPARSE_DIR}/include")
 target_compile_features(pe-parse PUBLIC cxx_std_17)
 
 # -----------------------------------------------------------------------------
-# dxbc — DXVK's DXBC → SPIR-V translator (static lib). Upstream CMake is clean
-# enough to add_subdirectory without changes.
-# -----------------------------------------------------------------------------
-add_subdirectory("${LSFG_ROOT}/thirdparty/dxbc-to-spirv" "${CMAKE_BINARY_DIR}/dxbc-to-spirv" EXCLUDE_FROM_ALL)
-
-# -----------------------------------------------------------------------------
 # framegen — the Vulkan frame-generation pipeline. Reused verbatim.
 #
 # Tell Gradle's externalNativeBuild task that this project's "input set"
@@ -66,6 +60,105 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 add_subdirectory("${LSFG_ROOT}/framegen" "${CMAKE_BINARY_DIR}/framegen" EXCLUDE_FROM_ALL)
 
 # -----------------------------------------------------------------------------
+# ncnn — optional AI (FlowNetLite/RefineNetLite) frame-gen backend.
+#
+# We can't vendor this ourselves (it's a large prebuilt binary SDK, not
+# source we can generate). Download the official Android Vulkan build from
+# https://github.com/Tencent/ncnn/releases (asset named
+# ncnn-<date>-android-vulkan.zip), unzip it, and lay it out as:
+#
+#   ${LSFG_ROOT}/thirdparty/ncnn-android-vulkan/<ABI>/include/ncnn/net.h
+#   ${LSFG_ROOT}/thirdparty/ncnn-android-vulkan/<ABI>/lib/libncnn.a
+#
+# (the release zip already has this arm64-v8a/armeabi-v7a/... layout — just
+# copy the whole extracted folder in and rename it to ncnn-android-vulkan).
+#
+# When present, NcnnInterpolator.cpp is compiled in and
+# NativeBridge.{init,release}AiInterpolator / aiInterpolate become real.
+# When absent, the build still succeeds; those JNI calls return
+# lsfg_android::kNcnnErrNotBuilt instead of doing anything, and the AI
+# backend option in Settings surfaces that as a clear error rather than a
+# silent no-op or a broken build.
+# -----------------------------------------------------------------------------
+set(NCNN_ROOT "${LSFG_ROOT}/thirdparty/ncnn-android-vulkan/${ANDROID_ABI}")
+if(EXISTS "${NCNN_ROOT}/include/ncnn/net.h" AND EXISTS "${NCNN_ROOT}/lib/libncnn.a")
+    set(LSFG_HAVE_NCNN TRUE)
+    # Don't hand-declare the imported target: this prebuilt was built with
+    # NCNN_OPENMP=ON and NCNN_VULKAN=ON (online SPIR-V compile via glslang),
+    # so the real ncnn target carries transitive link requirements
+    # (-fopenmp -static-openmp, Threads::Threads, glslang::glslang,
+    # glslang::SPIRV, dl, jnigraphics) that a bare IMPORTED_LOCATION does
+    # not pull in — that's what was producing the __kmpc_*/omp_* and
+    # glslang::* undefined symbol errors at link time. find_package reads
+    # ncnn's own generated config and wires all of it up automatically.
+    #
+    # The NDK toolchain file sets CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY,
+    # which makes find_package() search only inside the NDK sysroot and
+    # silently ignore PATHS pointing anywhere else (like our vendored SDK
+    # under thirdparty/). ncnnConfig.cmake also does its own nested
+    # find_package(glslang ...) internally, which we can't pass
+    # NO_CMAKE_FIND_ROOT_PATH to directly — so widen the search mode for
+    # the whole block instead of just this one call, then restore it so
+    # it doesn't loosen root-path checks for the rest of the build.
+    set(_lsfg_saved_find_root_path_mode_package "${CMAKE_FIND_ROOT_PATH_MODE_PACKAGE}")
+    set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
+    find_package(ncnn CONFIG REQUIRED
+        PATHS "${NCNN_ROOT}/lib/cmake/ncnn"
+        NO_DEFAULT_PATH
+    )
+    set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE "${_lsfg_saved_find_root_path_mode_package}")
+    unset(_lsfg_saved_find_root_path_mode_package)
+    message(STATUS "lsfg-android: ncnn found at ${NCNN_ROOT} — AI (ncnn) frame-gen backend ENABLED.")
+else()
+    set(LSFG_HAVE_NCNN FALSE)
+    message(WARNING
+        "lsfg-android: ncnn not found at ${NCNN_ROOT} — AI (ncnn) frame-gen backend DISABLED for this build.\n"
+        "  To enable it: download the Vulkan Android build from\n"
+        "  https://github.com/Tencent/ncnn/releases (ncnn-<date>-android-vulkan.zip),\n"
+        "  unzip it, and copy it so that\n"
+        "    ${NCNN_ROOT}/include/ncnn/net.h\n"
+        "    ${NCNN_ROOT}/lib/libncnn.a\n"
+        "  exist, then re-run the build.")
+endif()
+
+# -----------------------------------------------------------------------------
+# NcnnInterpolator.cpp gets its own static library instead of being compiled
+# straight into lsfg-android. ncnn's imported target (from find_package above)
+# carries INTERFACE_COMPILE_OPTIONS of -fno-rtti/-fno-exceptions — and those
+# usage requirements apply to a *direct* consumer's own compilation even when
+# linked PRIVATE (PRIVATE only stops them propagating further downstream).
+# Linking ncnn straight into lsfg-android was therefore silently disabling
+# exceptions for every other .cpp in the library too, breaking the real
+# try/catch error handling around LSFG_3_1P::initialize/createContextFromAHB
+# in lsfg_render_loop.cpp ("cannot use 'try' with exceptions disabled").
+# Routing it through this static lib keeps -fno-exceptions/-fno-rtti scoped
+# to NcnnInterpolator.cpp alone. libncnn.a (and the glslang/OpenMP libs ncnn's
+# target pulls in) still reach the final .so's link line regardless — CMake
+# forwards a static library's PRIVATE link dependencies to whatever ultimately
+# links it, even though it doesn't forward compile-time usage requirements
+# the same way. Safe to split out: NcnnInterpolator.hpp uses a pImpl (struct
+# Impl*), so no ncnn types leak into callers like lsfg_jni.cpp that just
+# include the header.
+if(LSFG_HAVE_NCNN)
+    add_library(lsfg-ncnn-interpolator STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/NcnnInterpolator.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/RifeWarp.cpp
+        # IFRNet: second selectable ncnn AI backend, same static lib as RIFE
+        # since both need the same -fno-rtti/-fno-exceptions isolation from
+        # ncnn's imported target (see comment block above). IfrnetInterpolator
+        # only includes NcnnInterpolator.hpp for the shared kNcnnErr*
+        # constants (header-only, no ODR risk from being compiled into the
+        # same TU set), and IfrnetWarp is a distinct custom layer from
+        # RifeWarp — see IfrnetWarp.hpp for why they aren't interchangeable.
+        ${CMAKE_CURRENT_SOURCE_DIR}/IfrnetInterpolator.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/IfrnetWarp.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/ncnn_cpu_policy.cpp
+    )
+    target_link_libraries(lsfg-ncnn-interpolator PRIVATE ncnn)
+    target_compile_definitions(lsfg-ncnn-interpolator PRIVATE LSFG_HAVE_NCNN=1)
+endif()
+
+# -----------------------------------------------------------------------------
 # lsfg-android — JNI shared library.
 # Phase 2 only exposes nativeVersion() plus placeholder symbols; later phases
 # add the real shader extraction and Vulkan context entry points.
@@ -73,24 +166,39 @@ add_subdirectory("${LSFG_ROOT}/framegen" "${CMAKE_BINARY_DIR}/framegen" EXCLUDE_
 find_library(log-lib log)
 find_library(neuralnetworks-lib neuralnetworks)
 
+# Hot post-process kernels are deliberately compiled at the highest local
+# optimization level. This keeps the rest of the native framegen library
+# untouched while helping the CPU final-sharpener vectorize its tight pixel loop.
+set_source_files_properties(cpu_postprocess.cpp PROPERTIES
+    COMPILE_OPTIONS "-O3;-ffast-math;-fomit-frame-pointer"
+)
+
 add_library(lsfg-android SHARED
     lsfg_jni.cpp
     android_shader_loader.cpp
     android_vk_probe.cpp
     android_vk_session.cpp
     ahb_image_bridge.cpp
-    lsfg_render_loop.cpp
+    gpu_postprocess.cpp
     nnapi_npu.cpp
+    nnapi_postprocess.cpp
+    cpu_postprocess.cpp
+    lsfg_render_loop.cpp
+    cpu_core_policy.cpp
     crash_reporter.cpp
+)
+
+target_compile_definitions(lsfg-android PRIVATE
+    $<$<BOOL:${LSFG_HAVE_NCNN}>:LSFG_HAVE_NCNN=1>
 )
 
 target_link_libraries(lsfg-android
     PRIVATE
         lsfg-vk-framegen
-        dxbc
         pe-parse
         volk
         ${log-lib}
         ${neuralnetworks-lib}
         android
+        $<$<BOOL:${LSFG_HAVE_NCNN}>:lsfg-ncnn-interpolator>
 )

@@ -185,7 +185,11 @@ void Context::present(Vulkan& vk,
     for (size_t pass = 0; pass < vk.generationCount; pass++) {
         auto& internalSemaphore = data.internalSemaphores.at(pass);
         auto& outSemaphore = data.outSemaphores.at(pass);
-        if (inSem >= 0) outSemaphore = Core::Semaphore(vk.device, outSem.empty() ? -1 : outSem.at(pass));
+        if (!outSem.empty()) {
+            if (pass >= outSem.size())
+                throw LSFG::vulkan_error(VK_ERROR_INITIALIZATION_FAILED, "Not enough output semaphores");
+            outSemaphore = Core::Semaphore(vk.device, outSem.at(pass));
+        }
         auto& completionFence = data.completionFences.at(pass);
         // Reuse the fence across frames — the wait at the top of this
         // function already guarantees it's signaled (its prior submission
@@ -234,8 +238,9 @@ void Context::present(Vulkan& vk,
 #endif
 
         buf2.end();
-        std::vector<Core::Semaphore> signals = { outSemaphore };
-        if (inSem < 0) signals.clear();
+        std::vector<Core::Semaphore> signals;
+        if (outSemaphore.isValid())
+            signals.push_back(outSemaphore);
         buf2.submit(vk.device.getComputeQueue(), completionFence,
             { internalSemaphore }, std::nullopt,
             signals, std::nullopt);

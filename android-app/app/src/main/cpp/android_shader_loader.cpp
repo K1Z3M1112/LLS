@@ -2,18 +2,14 @@
 //
 // On Linux the DLL path is discovered from Steam install locations. On Android
 // the user picks the file via SAF and Kotlin copies it to a local path under
-// the app's filesDir before calling into native. This file only implements
-// the PE parsing + DXBC→SPIR-V translation and caches one .spv per resource
-// ID into a caller-chosen cache directory.
+// the app's filesDir before calling into native. This file implements the PE
+// parsing and caches the precompiled FP16/FP32 SPIR-V resources (Lossless
+// Scaling 3.2.2.0+ ships shaders as native SPIR-V) into a caller-chosen cache
+// directory — one .spv per resource ID.
 
 #include "android_shader_loader.hpp"
 
 #include <pe-parse/parse.h>
-
-#include <dxbc_modinfo.h>
-#include <dxbc_module.h>
-#include <dxbc_reader.h>
-#include <thirdparty/spirv.hpp>
 
 #include <android/log.h>
 
@@ -22,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <fstream>
 #include <string>
 #include <sys/stat.h>
@@ -54,14 +51,21 @@ constexpr uint32_t kFp16IdOffset = 49;
 // FP32 SPIR-V variants live as RCDATA at DXBC_id + 98 (range 353..400).
 // Same shaders, no Float16 capability, MemoryModel Logical GLSL450 (no
 // VulkanMemoryModel) — verified in _analysis/fp32/ via dump_fp32_spv.py.
-// Preferred over the DXBC translator path on devices without vulkanMemoryModel.
-constexpr uint32_t kFp32SpirvIdOffset = 98;
+// This is the default path — see kFp32SpirvIdOffset in the header.
+using lsfg_android::kFp32SpirvIdOffset;
 
 // SPIR-V LE magic word (0x07230203). Used to validate FP16 blobs before
 // caching them — if THS reshuffles resource layout in a future Lossless.dll
 // update, IDs 304..351 may stop being SPIR-V; we silently skip those instead
 // of caching garbage.
 constexpr std::array<uint8_t, 4> kSpirvMagic{0x03, 0x02, 0x23, 0x07};
+
+// Sanity cap for a single RCDATA resource we're willing to copy out of the
+// PE resource table. Legitimate shader blobs here are a few KB; this exists
+// so a corrupted or maliciously crafted Lossless.dll that claims an absurd
+// resource size (bufLen is attacker-controlled input straight from the file)
+// can't force a huge/unbounded heap allocation.
+constexpr size_t kMaxResourceBytes = 16u * 1024u * 1024u; // 16 MiB
 
 struct ExtractionCtx {
     std::unordered_map<uint32_t, std::vector<uint8_t>> *out;
@@ -72,30 +76,45 @@ int on_resource(void *userData, const peparse::resource &res) {
     if (res.type != peparse::RT_RCDATA || res.buf == nullptr || res.buf->bufLen <= 0) {
         return 0;
     }
+    if (static_cast<size_t>(res.buf->bufLen) > kMaxResourceBytes) {
+        LOGE("Skipping oversized RCDATA resource id=%u (%llu bytes > cap) — "
+             "corrupt or untrusted DLL?", res.name,
+             static_cast<unsigned long long>(res.buf->bufLen));
+        return 0;
+    }
     std::vector<uint8_t> data(res.buf->bufLen);
     std::copy_n(res.buf->buf, res.buf->bufLen, data.data());
     (*ctx->out)[res.name] = std::move(data);
     return 0;
 }
 
-struct BindingOffsets {
-    uint32_t bindingIndex{};
-    uint32_t bindingOffset{};
-    uint32_t setIndex{};
-    uint32_t setOffset{};
-};
-
 // SPIR-V header layout: [magic][version][generator][bound][schema]
 // Vulkan 1.1 supports up to SPIR-V 1.3 (0x00010300). The dxvk compiler
 // targets SPIR-V 1.6 which Mali rejects at JIT compilation time. Patch the
 // version word down so the driver accepts the bytecode.
+bool read_spirv_word(const std::vector<uint8_t> &spirv, size_t wordIndex, uint32_t &out) {
+    if (wordIndex * 4u + 4u > spirv.size()) {
+        return false;
+    }
+    std::memcpy(&out, spirv.data() + wordIndex * 4u, sizeof(out));
+    return true;
+}
+
+bool write_spirv_word(std::vector<uint8_t> &spirv, size_t wordIndex, uint32_t value) {
+    if (wordIndex * 4u + 4u > spirv.size()) {
+        return false;
+    }
+    std::memcpy(spirv.data() + wordIndex * 4u, &value, sizeof(value));
+    return true;
+}
+
 void cap_spirv_version(std::vector<uint8_t> &spirv) {
     if (spirv.size() < 20) return;
-    uint32_t ver;
-    std::memcpy(&ver, spirv.data() + 4, 4);
+    uint32_t ver = 0;
+    if (!read_spirv_word(spirv, 1, ver)) return;
     if (ver > 0x00010300u) {
         ver = 0x00010300u;
-        std::memcpy(spirv.data() + 4, &ver, 4);
+        write_spirv_word(spirv, 1, ver);
     }
 }
 
@@ -109,9 +128,7 @@ void cap_spirv_version(std::vector<uint8_t> &spirv) {
 //   { 1, UNIFORM_BUFFER }, { 1, SAMPLER }, { 1, SAMPLED_IMAGE }, { 7, STORAGE_IMAGE }
 // and ShaderModule fills `binding = 0..N-1` over that flattened sequence.
 //
-// The DXBC→SPIR-V translator path (translate_dxbc_to_spirv) gets this for
-// free because DXVK happens to emit OpDecorate Binding decorations in the
-// matching order. The FP16 path consumes precompiled SPIR-V straight from
+// The FP16 path consumes precompiled SPIR-V straight from
 // Lossless.dll where the bindings are HLSL register slots and the
 // OpDecorate ordering is `sampler, sampled_image, storage_image..., cb`
 // (cb last) — flattened in declaration order this puts the uniform buffer
@@ -131,11 +148,11 @@ bool rewrite_spirv_bindings_dense(std::vector<uint8_t> &spirv) {
     if (spirv.size() < 20 || (spirv.size() % 4) != 0) {
         return false;
     }
-    auto *words = reinterpret_cast<uint32_t *>(spirv.data());
-    const size_t wordCount = spirv.size() / 4;
-    if (words[0] != 0x07230203u) {
+    uint32_t magic = 0;
+    if (!read_spirv_word(spirv, 0, magic) || magic != 0x07230203u) {
         return false;
     }
+    const size_t wordCount = spirv.size() / 4;
 
     // SPIR-V opcodes / decorations we care about.
     constexpr uint32_t kOpName = 5;
@@ -177,7 +194,10 @@ bool rewrite_spirv_bindings_dense(std::vector<uint8_t> &spirv) {
 
     size_t i = 5; // skip 5-word SPIR-V header
     while (i < wordCount) {
-        const uint32_t header = words[i];
+        uint32_t header = 0;
+        if (!read_spirv_word(spirv, i, header)) {
+            return false;
+        }
         const uint32_t wc = (header >> 16) & 0xFFFFu;
         const uint32_t op = header & 0xFFFFu;
         if (wc == 0 || i + wc > wordCount) {
@@ -187,38 +207,73 @@ bool rewrite_spirv_bindings_dense(std::vector<uint8_t> &spirv) {
             break;
         }
         switch (op) {
-            case kOpTypeSampler:
-                if (wc >= 2) typeKind[words[i + 1]] = KindSampler;
-                break;
-            case kOpTypeImage:
-                if (wc >= 8) {
-                    // OpTypeImage: id, sampledType, dim, depth, arrayed, ms, sampled, format
-                    // sampled == 1: sampled image (read-only); sampled == 2: storage image (read/write)
-                    typeKind[words[i + 1]] = (words[i + 7] == 2) ? KindStorageImage : KindSampledImage;
+            case kOpTypeSampler: {
+                uint32_t id = 0;
+                if (wc >= 2 && read_spirv_word(spirv, i + 1, id)) {
+                    typeKind[id] = KindSampler;
                 }
                 break;
-            case kOpTypeSampledImage:
-                if (wc >= 2) typeKind[words[i + 1]] = KindSampledImage;
+            }
+            case kOpTypeImage: {
+                uint32_t id = 0;
+                uint32_t sampledKind = 0;
+                if (wc >= 8 && read_spirv_word(spirv, i + 1, id) &&
+                    read_spirv_word(spirv, i + 7, sampledKind)) {
+                    // OpTypeImage: id, sampledType, dim, depth, arrayed, ms, sampled, format
+                    // sampled == 1: sampled image (read-only); sampled == 2: storage image (read/write)
+                    typeKind[id] = (sampledKind == 2) ? KindStorageImage : KindSampledImage;
+                }
                 break;
-            case kOpTypeStruct:
+            }
+            case kOpTypeSampledImage: {
+                uint32_t id = 0;
+                if (wc >= 2 && read_spirv_word(spirv, i + 1, id)) {
+                    typeKind[id] = KindSampledImage;
+                }
+                break;
+            }
+            case kOpTypeStruct: {
+                uint32_t id = 0;
                 // We assume any struct backing a binding is a uniform buffer.
                 // The CB layout in Lossless.dll is consistent (verified
                 // statically across all FP16/FP32 variants).
-                if (wc >= 2) typeKind[words[i + 1]] = KindUniformBuffer;
-                break;
-            case kOpTypePointer:
-                // OpTypePointer: id, storageClass, type
-                if (wc == 4) ptrPointee[words[i + 1]] = words[i + 3];
-                break;
-            case kOpVariable:
-                // OpVariable: resultType (pointer), resultId, storageClass, [initializer]
-                if (wc >= 4) varType[words[i + 2]] = words[i + 1];
-                break;
-            case kOpDecorate:
-                if (wc == 4 && words[i + 2] == kDecorationBinding) {
-                    sites.push_back({i + 3, words[i + 1], words[i + 3], KindUnknown});
+                if (wc >= 2 && read_spirv_word(spirv, i + 1, id)) {
+                    typeKind[id] = KindUniformBuffer;
                 }
                 break;
+            }
+            case kOpTypePointer: {
+                uint32_t id = 0;
+                uint32_t pointee = 0;
+                // OpTypePointer: id, storageClass, type
+                if (wc == 4 && read_spirv_word(spirv, i + 1, id) &&
+                    read_spirv_word(spirv, i + 3, pointee)) {
+                    ptrPointee[id] = pointee;
+                }
+                break;
+            }
+            case kOpVariable: {
+                uint32_t varResultType = 0;
+                uint32_t varId = 0;
+                // OpVariable: resultType (pointer), resultId, storageClass, [initializer]
+                if (wc >= 4 && read_spirv_word(spirv, i + 1, varResultType) &&
+                    read_spirv_word(spirv, i + 2, varId)) {
+                    varType[varId] = varResultType;
+                }
+                break;
+            }
+            case kOpDecorate: {
+                uint32_t decoration = 0;
+                uint32_t value = 0;
+                uint32_t varId = 0;
+                if (wc == 4 && read_spirv_word(spirv, i + 2, decoration) &&
+                    decoration == kDecorationBinding &&
+                    read_spirv_word(spirv, i + 1, varId) &&
+                    read_spirv_word(spirv, i + 3, value)) {
+                    sites.push_back({i + 3, varId, value, KindUnknown});
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -254,56 +309,19 @@ bool rewrite_spirv_bindings_dense(std::vector<uint8_t> &spirv) {
     });
 
     for (size_t k = 0; k < sites.size(); ++k) {
-        words[sites[k].valueWordIndex] = static_cast<uint32_t>(k);
+        if (!write_spirv_word(spirv, sites[k].valueWordIndex, static_cast<uint32_t>(k))) {
+            return false;
+        }
     }
     return true;
 }
 
-std::vector<uint8_t> translate_dxbc_to_spirv(const std::vector<uint8_t> &bytecode) {
-    dxvk::DxbcReader reader(reinterpret_cast<const char *>(bytecode.data()), bytecode.size());
-    dxvk::DxbcModule module(reader);
-    const dxvk::DxbcModuleInfo info{};
-    auto code = module.compile(info, "CS");
-
-    std::vector<BindingOffsets> bindingOffsets;
-    std::vector<uint32_t> varIds;
-    for (auto ins : code) {
-        if (ins.opCode() == spv::OpDecorate) {
-            if (ins.arg(2) == spv::DecorationBinding) {
-                const uint32_t varId = ins.arg(1);
-                bindingOffsets.resize(std::max(bindingOffsets.size(), size_t(varId + 1)));
-                bindingOffsets[varId].bindingIndex = ins.arg(3);
-                bindingOffsets[varId].bindingOffset = ins.offset() + 3;
-                varIds.push_back(varId);
-            }
-            if (ins.arg(2) == spv::DecorationDescriptorSet) {
-                const uint32_t varId = ins.arg(1);
-                bindingOffsets.resize(std::max(bindingOffsets.size(), size_t(varId + 1)));
-                bindingOffsets[varId].setIndex = ins.arg(3);
-                bindingOffsets[varId].setOffset = ins.offset() + 3;
-            }
-        }
-        if (ins.opCode() == spv::OpFunction) {
-            break;
-        }
+bool normalize_spirv_blob(std::vector<uint8_t> &spirv) {
+    if (spirv.size() < 20 || (spirv.size() % 4) != 0) {
+        return false;
     }
-
-    std::vector<BindingOffsets> validBindings;
-    for (const auto varId : varIds) {
-        const auto info = bindingOffsets[varId];
-        if (info.bindingOffset) {
-            validBindings.push_back(info);
-        }
-    }
-
-    for (size_t i = 0; i < validBindings.size(); ++i) {
-        code.data()[validBindings[i].bindingOffset] = static_cast<uint8_t>(i);
-    }
-
-    std::vector<uint8_t> spirv(code.size());
-    std::copy_n(reinterpret_cast<const uint8_t *>(code.data()), code.size(), spirv.data());
     cap_spirv_version(spirv);
-    return spirv;
+    return rewrite_spirv_bindings_dense(spirv);
 }
 
 bool write_file(const std::string &path, const std::vector<uint8_t> &data) {
@@ -319,64 +337,98 @@ bool write_file(const std::string &path, const std::vector<uint8_t> &data) {
 
 namespace lsfg_android {
 
-int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir) {
-    peparse::parsed_pe *dll = peparse::ParsePEFromFile(dllPath.c_str());
-    if (!dll) {
+namespace {
+bool is_lossless_3220(const std::string& path) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) return false;
+    const auto sz = f.tellg();
+    if (sz <= 0 || sz > static_cast<std::streamoff>(32 * 1024 * 1024)) return false;
+    f.seekg(0, std::ios::beg);
+    std::vector<uint8_t> data(static_cast<size_t>(sz));
+    if (!f.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size())))
+        return false;
+
+    // VS_VERSION_INFO stores ProductVersion as UTF-16LE. Require both the key
+    // and the exact 3.2.2.0 value so a later Lossless.dll layout cannot be
+    // silently accepted and partially mapped onto the 3.2.2 shader table.
+    const char key[] = "ProductVersion";
+    const char ver[] = "3.2.2.0";
+    bool keyFound = false;
+    bool verFound = false;
+    for (size_t i = 0; i + 2 * sizeof(key) <= data.size(); ++i) {
+        bool ok = true;
+        for (size_t j = 0; j < sizeof(key) - 1; ++j) {
+            if (data[i + j * 2] != static_cast<uint8_t>(key[j]) ||
+                data[i + j * 2 + 1] != 0) { ok = false; break; }
+        }
+        if (ok) { keyFound = true; break; }
+    }
+    for (size_t i = 0; i + 2 * sizeof(ver) <= data.size(); ++i) {
+        bool ok = true;
+        for (size_t j = 0; j < sizeof(ver) - 1; ++j) {
+            if (data[i + j * 2] != static_cast<uint8_t>(ver[j]) ||
+                data[i + j * 2 + 1] != 0) { ok = false; break; }
+        }
+        if (ok) { verFound = true; break; }
+    }
+    return keyFound && verFound;
+}
+} // namespace
+
+// Renamed to an internal impl; extract_dll_to_spirv (declared in the header)
+// wraps this in a try/catch so a malformed/hostile DLL can only ever fail
+// the import cleanly — it can never throw an uncaught C++ exception across
+// the JNI boundary.
+int extract_dll_to_spirv_impl(const std::string &dllPath, const std::string &cacheDir) {
+    if (!is_lossless_3220(dllPath)) {
+        LOGE("Rejected Lossless.dll: exact ProductVersion 3.2.2.0 is required (%s)", dllPath.c_str());
+        return kErrDllUnreadable;
+    }
+    peparse::parsed_pe *rawDll = peparse::ParsePEFromFile(dllPath.c_str());
+    if (!rawDll) {
         LOGE("ParsePEFromFile failed for %s", dllPath.c_str());
         return kErrDllUnreadable;
     }
+    // RAII guard: guarantees DestructParsedPE runs on every exit path,
+    // including an exception thrown out of IterRsrc/on_resource further
+    // down. Without this, an exception here would leak the parsed_pe
+    // structure — before extract_dll_to_spirv() gained its own try/catch
+    // that leak didn't matter because the whole process would abort anyway,
+    // but now that such an exception is caught and converted into a normal
+    // error return, cleanup has to happen unconditionally.
+    struct ParsedPeGuard {
+        peparse::parsed_pe *p;
+        ~ParsedPeGuard() { if (p) peparse::DestructParsedPE(p); }
+    } dllGuard{rawDll};
+    peparse::parsed_pe *dll = rawDll;
 
     std::unordered_map<uint32_t, std::vector<uint8_t>> blobsByResId;
     ExtractionCtx ctx{&blobsByResId};
     peparse::IterRsrc(dll, on_resource, &ctx);
-    peparse::DestructParsedPE(dll);
+    // dllGuard destructs `dll` automatically when this function returns (or
+    // throws) — no manual DestructParsedPE call here, since we don't need
+    // `dll` again below and an explicit call here would double-free against
+    // the guard's destructor.
 
-    // Ensure every DXBC resource we depend on is present.
-    for (uint32_t id : kResourceIds) {
-        if (blobsByResId.find(id) == blobsByResId.end()) {
-            LOGE("Missing resource id %u — is Lossless Scaling up to date?", id);
-            return kErrMissingResource;
-        }
-    }
-
-    int translated = 0;
-    for (uint32_t resId : kResourceIds) {
-        const auto &dxbc = blobsByResId.at(resId);
-        std::vector<uint8_t> spirv;
-        try {
-            spirv = translate_dxbc_to_spirv(dxbc);
-        } catch (const std::exception &e) {
-            LOGE("DXBC→SPIR-V failed for resource %u: %s", resId, e.what());
-            return kErrTranslationFailed;
-        }
-        if (spirv.empty()) {
-            LOGE("Empty SPIR-V for resource %u", resId);
-            return kErrTranslationFailed;
-        }
-
-        char path[512];
-        std::snprintf(path, sizeof(path), "%s/%u.spv", cacheDir.c_str(), resId);
-        if (!write_file(path, spirv)) {
-            LOGE("Failed to write %s", path);
-            return kErrWriteFailed;
-        }
-        ++translated;
-    }
-
-    LOGI("Translated %d DXBC shaders into %s", translated, cacheDir.c_str());
+    // kResourceIds are the base (DXBC-era) resource ids — no longer read
+    // directly, but still needed as the anchor every FP16 (+49) and FP32
+    // (+98) offset is computed from.
+    LOGI("Parsed %s, extracting FP16/FP32 SPIR-V", dllPath.c_str());
 
     // FP16 SPIR-V variants: precompiled in the DLL at DXBC_id + 49. Cache them
     // verbatim into <cacheDir>/fp16/. This is best-effort — a Lossless.dll
     // build that doesn't ship the FP16 set must still produce a working FP32
     // cache. Validation: the blob must start with the SPIR-V LE magic.
     const std::string fp16Dir = cacheDir + "/fp16";
+    bool fp16DirOk = true;
     if (mkdir(fp16Dir.c_str(), 0700) != 0 && errno != EEXIST) {
         LOGE("Failed to create FP16 cache dir %s (errno=%d) — FP16 path disabled", fp16Dir.c_str(), errno);
-        return kOk; // FP32 already succeeded; degrade gracefully.
+        fp16DirOk = false;
     }
     int fp16Cached = 0;
     int fp16Skipped = 0;
     for (uint32_t dxbcId : kResourceIds) {
+        if (!fp16DirOk) break;
         const uint32_t fp16Id = dxbcId + kFp16IdOffset;
         const auto it = blobsByResId.find(fp16Id);
         if (it == blobsByResId.end()) {
@@ -394,8 +446,8 @@ int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir
             ++fp16Skipped;
             continue;
         }
-        if (!rewrite_spirv_bindings_dense(blob)) {
-            LOGE("FP16 SPIR-V binding rewrite failed for resource %u — skipping", fp16Id);
+        if (!normalize_spirv_blob(blob)) {
+            LOGE("FP16 SPIR-V normalization failed for resource %u — skipping", fp16Id);
             ++fp16Skipped;
             continue;
         }
@@ -414,17 +466,18 @@ int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir
     // 353..400). Same shape as the FP16 cache step above, including the
     // dense-binding rewrite — these blobs ship with HLSL register slots like
     // the FP16 set, so they need the same flatten before the framegen
-    // descriptor-set layout will accept them. Best-effort: a missing FP32
-    // SPIR-V set falls back to the (already populated) DXBC cache.
+    // descriptor-set layout will accept them.
     const std::string fp32Dir = cacheDir + "/fp32";
+    bool fp32DirOk = true;
     if (mkdir(fp32Dir.c_str(), 0700) != 0 && errno != EEXIST) {
         LOGE("Failed to create FP32 SPIR-V cache dir %s (errno=%d) — FP32 SPIR-V path disabled",
              fp32Dir.c_str(), errno);
-        return kOk;
+        fp32DirOk = false;
     }
     int fp32SpvCached = 0;
     int fp32SpvSkipped = 0;
     for (uint32_t dxbcId : kResourceIds) {
+        if (!fp32DirOk) break;
         const uint32_t fp32Id = dxbcId + kFp32SpirvIdOffset;
         const auto it = blobsByResId.find(fp32Id);
         if (it == blobsByResId.end()) {
@@ -437,8 +490,8 @@ int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir
             ++fp32SpvSkipped;
             continue;
         }
-        if (!rewrite_spirv_bindings_dense(blob)) {
-            LOGE("FP32 SPIR-V binding rewrite failed for resource %u — skipping", fp32Id);
+        if (!normalize_spirv_blob(blob)) {
+            LOGE("FP32 SPIR-V normalization failed for resource %u — skipping", fp32Id);
             ++fp32SpvSkipped;
             continue;
         }
@@ -453,7 +506,29 @@ int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir
     }
     LOGI("FP32 SPIR-V variants: %d cached, %d skipped (%s)",
          fp32SpvCached, fp32SpvSkipped, fp32Dir.c_str());
+
+    const bool fp16Complete = fp16DirOk && fp16Skipped == 0;
+    const bool fp32Complete = fp32DirOk && fp32SpvSkipped == 0;
+    if (!fp16Complete && !fp32Complete) {
+        LOGE("Neither FP16 nor FP32 SPIR-V set is complete in %s — "
+             "is Lossless Scaling up to date? (requires exactly 3.2.2.0)", dllPath.c_str());
+        return kErrMissingResource;
+    }
     return kOk;
+}
+
+int extract_dll_to_spirv(const std::string &dllPath, const std::string &cacheDir) {
+    try {
+        return extract_dll_to_spirv_impl(dllPath, cacheDir);
+    } catch (const std::exception &e) {
+        LOGE("Exception while parsing %s: %s — treating as unreadable/corrupt DLL",
+             dllPath.c_str(), e.what());
+        return kErrParseException;
+    } catch (...) {
+        LOGE("Unknown exception while parsing %s — treating as unreadable/corrupt DLL",
+             dllPath.c_str());
+        return kErrParseException;
+    }
 }
 
 std::vector<uint8_t> load_cached_spirv(const std::string &cacheDir, uint32_t resId,
@@ -464,11 +539,8 @@ std::vector<uint8_t> load_cached_spirv(const std::string &cacheDir, uint32_t res
             std::snprintf(path, sizeof(path), "%s/fp16/%u.spv", cacheDir.c_str(), resId);
             break;
         case ShaderCache::Fp32Spirv:
-            std::snprintf(path, sizeof(path), "%s/fp32/%u.spv", cacheDir.c_str(), resId);
-            break;
-        case ShaderCache::Dxbc:
         default:
-            std::snprintf(path, sizeof(path), "%s/%u.spv", cacheDir.c_str(), resId);
+            std::snprintf(path, sizeof(path), "%s/fp32/%u.spv", cacheDir.c_str(), resId);
             break;
     }
     std::ifstream f(path, std::ios::binary | std::ios::ate);
@@ -479,7 +551,11 @@ std::vector<uint8_t> load_cached_spirv(const std::string &cacheDir, uint32_t res
     f.seekg(0, std::ios::beg);
     std::vector<uint8_t> out(static_cast<size_t>(size));
     f.read(reinterpret_cast<char *>(out.data()), static_cast<std::streamsize>(size));
-    cap_spirv_version(out);  // fix shaders cached before the SPIR-V 1.3 downgrade
+    if (!normalize_spirv_blob(out)) {
+        LOGE("Cached SPIR-V resource %u failed runtime normalization (%s) — skipping",
+             resId, path);
+        return {};
+    }
     return out;
 }
 

@@ -39,6 +39,9 @@ namespace LSFG::Core {
         ///
         Semaphore(const Core::Device& device, int fd);
 
+        /// Select the external FD handle type used by the fd constructor.
+        static void setExternalFdHandleType(VkExternalSemaphoreHandleTypeFlagBits type) noexcept;
+
         ///
         /// Signal the semaphore to a specific value.
         ///
@@ -77,6 +80,7 @@ namespace LSFG::Core {
         ~Semaphore() = default;
     private:
         std::shared_ptr<VkSemaphore> semaphore;
+        static VkExternalSemaphoreHandleTypeFlagBits externalFdHandleType;
         bool isTimeline{};
     };
 

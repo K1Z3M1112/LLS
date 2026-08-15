@@ -185,6 +185,12 @@ int createAhbImage(VulkanSession &vk, uint32_t w, uint32_t h,
     // through this memory may use a less optimal cache hierarchy, but for
     // our access pattern (one vkCmdCopyImage / vkCmdBlitImage per frame
     // followed by a CPU read) the savings outweigh the GPU-side cost.
+    // CPU_WRITE_OFTEN is needed alongside CPU_READ_OFTEN so the ncnn AI
+    // backend (lsfg_render_loop.cpp's runAiInterpolate) can CPU-lock these
+    // same AHBs and memcpy interpolated frames straight into the output
+    // slots, instead of only ever being GPU-written by the LSFG shader
+    // chain. Harmless when the AI backend isn't used — one extra usage bit
+    // does not change allocation size or the GPU-side access path.
     AHardwareBuffer_Desc desc{
         .width = w,
         .height = h,
@@ -192,7 +198,8 @@ int createAhbImage(VulkanSession &vk, uint32_t w, uint32_t h,
         .format = ahbFormat,
         .usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE
                | AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT
-               | AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
+               | AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN
+               | AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
         .stride = 0,
         .rfu0 = 0,
         .rfu1 = 0,

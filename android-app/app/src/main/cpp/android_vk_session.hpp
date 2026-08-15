@@ -57,6 +57,20 @@ struct VulkanSession {
     // globals.
     VolkDeviceTable fn{};
 
+    // Whether this physical device can actually export a binary VkSemaphore
+    // as an OPAQUE_FD (queried via vkGetPhysicalDeviceExternalSemaphorePropertiesKHR
+    // at session init — presence of the VK_KHR_external_semaphore_fd *extension*
+    // does not imply OPAQUE_FD specifically is exportable; many Android GPU
+    // drivers, including ARM Mali, only support VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT
+    // for that extension, not OPAQUE_FD). framegen's Semaphore(fd) import path
+    // hard-codes OPAQUE_FD, so when this is false the cross-device GPU->GPU
+    // completion-semaphore path can never succeed on this device and the
+    // render loop must fall back to LSFG_3_1::waitIdle()/LSFG_3_1P::waitIdle()
+    // (CPU-side sync) instead.
+    bool hasExportableOpaqueFdSemaphore = false;
+    // Android-native fence FD semaphore export (used by Mali when OPAQUE_FD is unavailable).
+    bool hasExportableSyncFdSemaphore = false;
+
     // Per-instance function pointers we resolved against OUR instance. Same
     // problem as VolkDeviceTable above but at instance scope: framegen's
     // Instance::Instance() creates its own VkInstance without surface
@@ -70,6 +84,7 @@ struct VulkanSession {
     PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR pfnGetPhysicalDeviceSurfaceCapabilitiesKHR = nullptr;
     PFN_vkGetPhysicalDeviceSurfaceFormatsKHR pfnGetPhysicalDeviceSurfaceFormatsKHR = nullptr;
     PFN_vkGetPhysicalDeviceSurfaceSupportKHR pfnGetPhysicalDeviceSurfaceSupportKHR = nullptr;
+    PFN_vkGetPhysicalDeviceSurfacePresentModesKHR pfnGetPhysicalDeviceSurfacePresentModesKHR = nullptr;
 
 
     // Device UUID packed the way framegen expects: vendorID<<32 | deviceID.

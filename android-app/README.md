@@ -43,7 +43,7 @@ generated frames into a system overlay sitting on top of the target game.
 ### Pacing
 
 - **Vsync alignment** with configurable slack and per-slot budget.
-- **Pacing presets** for common targets, plus a manual target FPS cap.
+- **Pacing presets** for common targets.
 - **Queue depth**, **EMA alpha** for jitter smoothing, outlier rejection.
 - **Frame graph HUD** with frame-time graph and a `real X fps / total Y fps`
   counter (`total = capture × multiplier` when active, `total = capture` when
@@ -154,12 +154,13 @@ z-order wiring is in place.
 ### Shader pipeline
 
 On first DLL selection: `ShaderExtractor` → native `extractShaders` →
-`android_shader_loader.cpp` parses the PE via `pe-parse`, translates each
-DXBC resource via DXVK's `dxbc` library, and writes one `.spv` per resource
-ID into `filesDir/spirv/`. Then `probeShaders` runs a headless Vulkan 1.1
-device and calls `vkCreateShaderModule` on every blob to catch driver
-rejection before the full pipeline is attempted. The `Lossless.dll` copy is
-deleted after extraction.
+`android_shader_loader.cpp` parses the PE via `pe-parse` and caches the
+precompiled FP16/FP32 SPIR-V resources verbatim (Lossless Scaling 3.2.2.0+
+ships shaders as native SPIR-V — no translation step), writing one `.spv`
+per resource ID into `filesDir/spirv/{fp16,fp32}/`. Then `probeShaders` runs
+a headless Vulkan 1.1 device and calls `vkCreateShaderModule` on every blob
+to catch driver rejection before the full pipeline is attempted. The
+`Lossless.dll` copy is deleted after extraction.
 
 > [!IMPORTANT]
 > Do not commit the DLL or extracted SPIR-V. This app is sideload-only and
@@ -193,7 +194,7 @@ LSFG-Android-Application/                       # Android Studio project root
         lsfg_render_loop.cpp        # Worker thread, framegen wiring, presentation
         android_vk_session.cpp      # Persistent Vulkan device + VolkDeviceTable
         android_vk_probe.cpp        # Headless Vulkan smoke test for shaders
-        android_shader_loader.cpp   # DXBC -> SPIR-V extraction + name->id map
+        android_shader_loader.cpp   # FP16/FP32 SPIR-V extraction + name->id map
         ahb_image_bridge.cpp        # AHardwareBuffer <-> VkImage import
         nnapi_npu.cpp               # NNAPI runtime wrapper
         nnapi_postprocess.cpp       # NPU post-processing stage
