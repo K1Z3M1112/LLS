@@ -257,6 +257,11 @@ Image::Image(const Core::Device& device, VkExtent2D extent, VkFormat format,
     if (ahb == nullptr)
         throw LSFG::vulkan_error(VK_ERROR_INITIALIZATION_FAILED, "AHB is null");
 
+    AHardwareBuffer_acquire(ahb);
+    this->ahbOwner = std::shared_ptr<AHardwareBuffer>(ahb, [](AHardwareBuffer* buffer) {
+        if (buffer) AHardwareBuffer_release(buffer);
+    });
+
     VkAndroidHardwareBufferFormatPropertiesANDROID fmtProps{
         .sType = VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_FORMAT_PROPERTIES_ANDROID,
     };

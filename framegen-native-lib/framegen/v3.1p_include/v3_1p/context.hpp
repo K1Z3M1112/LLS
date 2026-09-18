@@ -61,6 +61,13 @@ namespace LSFG_3_1P {
         ///
         void present(Vulkan& vk,
             int inSem, const std::vector<int>& outSem);
+#ifdef __ANDROID__
+        // Present using the current/previous capture AHBs directly. The AHBs are
+        // imported into this context and bound to a safe 8-frame descriptor slot;
+        // no pixel copy is performed.
+        void presentAHB(Vulkan& vk, AHardwareBuffer* current, AHardwareBuffer* previous,
+            int inSem, const std::vector<int>& outSem);
+#endif
 
         ///
         /// Wait for the GPU work submitted by the most recent present() call

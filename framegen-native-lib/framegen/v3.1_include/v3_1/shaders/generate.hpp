@@ -14,6 +14,10 @@
 #include <array>
 #include <vector>
 #include <cstdint>
+#include <cstddef>
+#ifdef __ANDROID__
+struct AHardwareBuffer;
+#endif
 
 namespace LSFG_3_1::Shaders {
 
@@ -55,7 +59,12 @@ namespace LSFG_3_1::Shaders {
         ///
         /// Dispatch the shaderchain.
         ///
-        void Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount, uint64_t pass_idx);
+        void Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount, uint64_t pass_idx, size_t inputSlot = 0);
+#ifdef __ANDROID__
+        // Rebind the two frame inputs for one command-buffer ring slot without copying pixels.
+        void bindExternalInputImages(Vulkan& vk, size_t slot, const Core::Image& in0, const Core::Image& in1);
+        Core::Image& getInputImage(size_t slot, size_t parity);
+#endif
         /// Expose output images for Android queue-family acquire/release.
         [[nodiscard]] std::vector<Core::Image>& getOutImages() { return this->outImgs; }
         [[nodiscard]] const std::vector<Core::Image>& getOutImages() const { return this->outImgs; }
@@ -72,11 +81,13 @@ namespace LSFG_3_1::Shaders {
         std::array<Core::Sampler, 2> samplers;
         struct GeneratePass {
             Core::Buffer buffer;
-            std::array<Core::DescriptorSet, 2> descriptorSet;
+            std::array<std::array<Core::DescriptorSet, 2>, 8> descriptorSet;
         };
         std::vector<GeneratePass> passes;
 
         Core::Image inImg1, inImg2;
+        std::array<Core::Image, 8> inputImg1Ring;
+        std::array<Core::Image, 8> inputImg2Ring;
         Core::Image inImg3, inImg4, inImg5;
         std::vector<Core::Image> outImgs;
     };

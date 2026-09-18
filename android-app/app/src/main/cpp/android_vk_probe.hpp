@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace lsfg_android {
@@ -21,14 +22,63 @@ int probe_shaders_on_device(const std::string &cacheDir);
 // as "FP16 not available" rather than a failure to probe.
 bool device_supports_float16();
 
-// Reports whether the device advertises vulkanMemoryModel — required by the
-// DXBC→SPIR-V framegen path (the bundled dxbc translator emits OpCapability
-// VulkanMemoryModel unconditionally). The precompiled FP16 SPIR-V blobs from
-// Lossless.dll do NOT use VMM (verified in _analysis/*.dis), so a device
-// without VMM can still run framegen via the FP16 path. Used by the render
-// loop to auto-force FP16 mode on Mali Bifrost/Valhall (G57/G68/G77) which
-// reports VMM=false. Returns false on any probe error (treat as "VMM not
-// available", same defensive default as device_supports_float16).
+// Reports whether the device advertises vulkanMemoryModel. Not currently
+// consumed by the render loop (both the FP16 and FP32 SPIR-V paths avoid
+// VulkanMemoryModel entirely — verified in _analysis/*.dis), but kept
+// available as a general Vulkan capability probe. Returns false on any
+// probe error, same defensive default as device_supports_float16().
 bool device_supports_vulkan_memory_model();
+
+// Highest Vulkan instance API version this device's loader reports via
+// vkEnumerateInstanceVersion, capped to kMaxNegotiatedApiVersion (see .cpp).
+// This is what create_instance_and_device() actually requests now instead
+// of a hardcoded VK_API_VERSION_1_1, so the render/probe paths always run
+// at the newest API tier the driver supports (e.g. most 2023+ Adreno/Xclipse
+// drivers report 1.3; older Mali/Adreno drivers on Android 10-12 devices
+// often cap at 1.1). Returns 0 if there's no Vulkan loader at all.
+uint32_t query_negotiated_instance_api_version();
+
+// Human-readable "major.minor.patch" for [apiVersion] (a packed
+// VK_MAKE_API_VERSION-style uint32, as returned by
+// query_negotiated_instance_api_version() or read from
+// VkPhysicalDeviceProperties::apiVersion). Used by the Device Info card.
+std::string format_vulkan_api_version(uint32_t apiVersion);
+
+// Convenience for the Device Info card: negotiates an instance the same
+// way create_instance_and_device() does, reads the first physical
+// device's VkPhysicalDeviceProperties::apiVersion (the version the actual
+// GPU driver supports, which is what matters for "what can this device
+// run" — the instance-level negotiated version above is only an upper
+// bound), formats it, and tears the temporary instance down. Returns
+// "unknown" on any probe failure (no loader, no device, etc.).
+std::string get_vulkan_device_api_version_string();
+
+// GPU facts beyond just the name (already covered by getVulkanGpuName in
+// the ncnn path) — vendor, discrete/integrated, driver version, and a
+// VRAM estimate. All defaulted so a partial probe failure still returns
+// something sane instead of garbage.
+struct GpuInfo {
+    std::string vendor = "unknown";       // decoded from VkPhysicalDeviceProperties::vendorID
+    std::string deviceType = "unknown";   // "integrated" / "discrete" / "virtual" / "cpu" / "other"
+    std::string driverVersion = "unknown";
+    // Largest DEVICE_LOCAL heap size, in MiB. On the near-universal
+    // unified-memory mobile SoC this is NOT dedicated video RAM — it's
+    // the GPU-addressable slice of shared system RAM Vulkan reports as
+    // device-local, same as what desktop tools call "VRAM" on an iGPU.
+    // There is no portable Vulkan query for actual discrete VRAM vs.
+    // shared UMA, so the UI must label this as an estimate.
+    long long deviceLocalHeapMb = -1;
+    // Vulkan has no portable query for ALU/shader-core count (unlike CPU
+    // core count, which sysfs exposes directly) — vendors gate that behind
+    // proprietary extensions or don't expose it at all. Left unset
+    // (-1) rather than guessed from the device name string, which would
+    // be unreliable across driver/SKU revisions.
+    int shaderCoreCount = -1;
+};
+
+// Probes the first Vulkan physical device for the fields above. Returns a
+// default-constructed GpuInfo (all "unknown"/-1) if there's no Vulkan
+// loader or no device.
+GpuInfo get_vulkan_gpu_info();
 
 } // namespace lsfg_android

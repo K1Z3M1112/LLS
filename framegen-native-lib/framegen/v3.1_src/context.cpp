@@ -168,7 +168,7 @@ void Context::present(Vulkan& vk,
     }
 #endif
 
-    this->mipmaps.Dispatch(data.cmdBuffer1, this->frameIdx);
+    this->mipmaps.Dispatch(data.cmdBuffer1, this->frameIdx, this->frameIdx % 8);
     for (size_t i = 0; i < 7; i++)
         this->alpha.at(6 - i).Dispatch(data.cmdBuffer1, this->frameIdx);
     this->beta.Dispatch(data.cmdBuffer1, this->frameIdx);
@@ -184,7 +184,11 @@ void Context::present(Vulkan& vk,
     for (size_t pass = 0; pass < vk.generationCount; pass++) {
         auto& internalSemaphore = data.internalSemaphores.at(pass);
         auto& outSemaphore = data.outSemaphores.at(pass);
-        if (inSem >= 0) outSemaphore = Core::Semaphore(vk.device, outSem.empty() ? -1 : outSem.at(pass));
+        if (!outSem.empty()) {
+            if (pass >= outSem.size())
+                throw LSFG::vulkan_error(VK_ERROR_INITIALIZATION_FAILED, "Not enough output semaphores");
+            outSemaphore = Core::Semaphore(vk.device, outSem.at(pass));
+        }
         auto& completionFence = data.completionFences.at(pass);
         // Reuse the fence across frames — the wait at the top of this
         // function already guarantees it's signaled (its prior submission
@@ -216,7 +220,7 @@ void Context::present(Vulkan& vk,
             if (i >= 4)
                 this->delta.at(i - 4).Dispatch(buf2, this->frameIdx, pass);
         }
-        this->generate.Dispatch(buf2, this->frameIdx, pass);
+        this->generate.Dispatch(buf2, this->frameIdx, pass, this->frameIdx % 8);
 
 #ifdef __ANDROID__
         {
@@ -233,8 +237,9 @@ void Context::present(Vulkan& vk,
 #endif
 
         buf2.end();
-        std::vector<Core::Semaphore> signals = { outSemaphore };
-        if (inSem < 0) signals.clear();
+        std::vector<Core::Semaphore> signals;
+        if (outSemaphore.isValid())
+            signals.push_back(outSemaphore);
         buf2.submit(vk.device.getComputeQueue(), completionFence,
             { internalSemaphore }, std::nullopt,
             signals, std::nullopt);
@@ -242,6 +247,140 @@ void Context::present(Vulkan& vk,
 
     this->frameIdx++;
 }
+
+#ifdef __ANDROID__
+void Context::presentAHB(Vulkan& vk, AHardwareBuffer* current, AHardwareBuffer* previous,
+        int inSem, const std::vector<int>& outSem) {
+    const size_t inputSlot = this->frameIdx % 8;
+    auto& data = this->data.at(inputSlot);
+
+    // 3. wait for completion of previous frame in this slot
+    if (data.shouldWait)
+        for (auto& fence : data.completionFences)
+            if (!fence.wait(vk.device, UINT64_MAX))
+                throw LSFG::vulkan_error(VK_TIMEOUT, "Fence wait timed out");
+    data.shouldWait = true;
+
+    // The ring slot is now known to be idle. Import and bind the exact capture
+    // AHBs for this submission. This is descriptor/image metadata only; the
+    // pixel storage remains the original capture buffers (zero-copy).
+    this->mipmaps.bindExternalInputs(vk, inputSlot, current, previous);
+    const size_t parity = this->frameIdx % 2;
+    Core::Image& currentImg = this->mipmaps.getInputImage(inputSlot, parity);
+    Core::Image& previousImg = this->mipmaps.getInputImage(inputSlot, 1 - parity);
+    this->generate.bindExternalInputImages(vk, inputSlot, currentImg, previousImg);
+
+    // 1. create mipmaps and process input image
+    if (inSem >= 0) data.inSemaphore = Core::Semaphore(vk.device, inSem);
+    // Internal (non-exported) semaphores are plain signal-once/wait-once
+    // binary semaphores — a wait operation implicitly returns them to the
+    // unsignaled state, so they're safe to keep across frames instead of
+    // being recreated every present(). Only allocate on first use of this
+    // ring slot.
+    for (size_t i = 0; i < vk.generationCount; i++)
+        if (!data.internalSemaphores.at(i).isValid())
+            data.internalSemaphores.at(i) = Core::Semaphore(vk.device);
+
+    // Reuse this ring slot's command buffer (reset instead of reallocate)
+    // — the wait above already guarantees its prior submission has
+    // finished on the GPU.
+    if (!data.cmdBuffer1.isValid())
+        data.cmdBuffer1 = Core::CommandBuffer(vk.device, vk.commandPool);
+    else
+        data.cmdBuffer1.reset();
+    data.cmdBuffer1.begin();
+
+#ifdef __ANDROID__
+    {
+        std::vector<VkImageMemoryBarrier2> acquireBarriers;
+        acquireBarriers.reserve(2);
+        add_external_acquire(acquireBarriers, vk, this->mipmaps.getInputImage(inputSlot, this->frameIdx % 2), VK_ACCESS_2_SHADER_READ_BIT);
+        add_external_acquire(acquireBarriers, vk, this->mipmaps.getInputImage(inputSlot, 1 - (this->frameIdx % 2)), VK_ACCESS_2_SHADER_READ_BIT);
+        emit_external_barriers(data.cmdBuffer1, acquireBarriers);
+    }
+#endif
+
+    this->mipmaps.Dispatch(data.cmdBuffer1, this->frameIdx, this->frameIdx % 8);
+    for (size_t i = 0; i < 7; i++)
+        this->alpha.at(6 - i).Dispatch(data.cmdBuffer1, this->frameIdx);
+    this->beta.Dispatch(data.cmdBuffer1, this->frameIdx);
+
+    data.cmdBuffer1.end();
+    std::vector<Core::Semaphore> waits = { data.inSemaphore };
+    if (inSem < 0) waits.clear();
+    data.cmdBuffer1.submit(vk.device.getComputeQueue(), std::nullopt,
+        waits, std::nullopt,
+        data.internalSemaphores, std::nullopt);
+
+    // 2. generate intermediary frames
+    for (size_t pass = 0; pass < vk.generationCount; pass++) {
+        auto& internalSemaphore = data.internalSemaphores.at(pass);
+        auto& outSemaphore = data.outSemaphores.at(pass);
+        if (!outSem.empty()) {
+            if (pass >= outSem.size())
+                throw LSFG::vulkan_error(VK_ERROR_INITIALIZATION_FAILED, "Not enough output semaphores");
+            outSemaphore = Core::Semaphore(vk.device, outSem.at(pass));
+        }
+        auto& completionFence = data.completionFences.at(pass);
+        // Reuse the fence across frames — the wait at the top of this
+        // function already guarantees it's signaled (its prior submission
+        // is done) before we get here, so a reset is valid.
+        if (!completionFence.isValid())
+            completionFence = Core::Fence(vk.device);
+        else
+            completionFence.reset(vk.device);
+
+        auto& buf2 = data.cmdBuffers2.at(pass);
+        if (!buf2.isValid())
+            buf2 = Core::CommandBuffer(vk.device, vk.commandPool);
+        else
+            buf2.reset();
+        buf2.begin();
+
+#ifdef __ANDROID__
+        {
+            std::vector<VkImageMemoryBarrier2> acquireBarriers;
+            acquireBarriers.reserve(1);
+            add_external_acquire(acquireBarriers, vk, this->generate.getOutImages().at(pass),
+                VK_ACCESS_2_SHADER_WRITE_BIT);
+            emit_external_barriers(buf2, acquireBarriers);
+        }
+#endif
+
+        for (size_t i = 0; i < 7; i++) {
+            this->gamma.at(i).Dispatch(buf2, this->frameIdx, pass);
+            if (i >= 4)
+                this->delta.at(i - 4).Dispatch(buf2, this->frameIdx, pass);
+        }
+        this->generate.Dispatch(buf2, this->frameIdx, pass, this->frameIdx % 8);
+
+#ifdef __ANDROID__
+        {
+            std::vector<VkImageMemoryBarrier2> releaseBarriers;
+            releaseBarriers.reserve(pass + 1 == vk.generationCount ? 3 : 1);
+            add_external_release(releaseBarriers, vk, this->generate.getOutImages().at(pass),
+                VK_ACCESS_2_SHADER_WRITE_BIT);
+            if (pass + 1 == vk.generationCount) {
+                add_external_release(releaseBarriers, vk, this->generate.getInputImage(inputSlot, this->frameIdx % 2), VK_ACCESS_2_SHADER_READ_BIT);
+                add_external_release(releaseBarriers, vk, this->generate.getInputImage(inputSlot, 1 - (this->frameIdx % 2)), VK_ACCESS_2_SHADER_READ_BIT);
+            }
+            emit_external_barriers(buf2, releaseBarriers);
+        }
+#endif
+
+        buf2.end();
+        std::vector<Core::Semaphore> signals;
+        if (outSemaphore.isValid())
+            signals.push_back(outSemaphore);
+        buf2.submit(vk.device.getComputeQueue(), completionFence,
+            { internalSemaphore }, std::nullopt,
+            signals, std::nullopt);
+    }
+
+    this->frameIdx++;
+}
+
+#endif
 
 void Context::waitForCompletion(Vulkan& vk) const {
     if (this->frameIdx == 0)

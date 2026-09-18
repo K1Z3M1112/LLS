@@ -79,6 +79,17 @@ namespace LSFG_3_1 {
     ///
     __attribute__((visibility("default")))
     void presentContext(int32_t id, int inSem, const std::vector<int>& outSem);
+#ifdef __ANDROID__
+    /// Present using the current and previous capture AHBs directly.
+    /// The buffers are imported and bound to an 8-slot descriptor ring; no
+    /// pixel copy is performed.
+    __attribute__((visibility("default")))
+    void presentContextAHB(int32_t id, AHardwareBuffer* current, AHardwareBuffer* previous,
+        int inSem, const std::vector<int>& outSem);
+#endif
+
+    __attribute__((visibility("default")))
+    void setExternalSemaphoreFdHandleType(VkExternalSemaphoreHandleTypeFlagBits type);
 
     ///
     /// Delete an LSFG context.

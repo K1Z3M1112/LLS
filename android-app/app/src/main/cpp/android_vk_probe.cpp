@@ -1,10 +1,10 @@
 // Minimal Vulkan smoke test for the cached SPIR-V blobs.
 //
-// Phase 4 only validates that every shader the DXBC→SPIR-V translator produced
+// Phase 4 only validates that every cached precompiled FP32 SPIR-V shader
 // is accepted by the device driver via vkCreateShaderModule. That is a
 // surprisingly powerful end-to-end check — it catches bad headers, invalid
 // magic numbers, unsupported decorations, and any Vulkan version mismatch
-// between how the shader was translated and what the device actually speaks.
+// between the shader and what the device actually speaks.
 //
 // Full pipeline creation (create/present/delete context) lives in later
 // phases, once we also have MediaProjection-sourced VkImages to feed it.
@@ -16,9 +16,12 @@
 
 #include <android/log.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -31,6 +34,13 @@
 namespace lsfg_android {
 
 namespace {
+
+// We cap negotiation at 1.3 even if a future loader reports higher: the
+// framegen SPIR-V shaders and every probe in this file were only ever
+// verified up to 1.3 semantics (VulkanMemoryModel, VK_KHR_* promotions),
+// and VkApplicationInfo::apiVersion is a promise about what the app has
+// been tested against, not just an upper bound the driver enforces.
+constexpr uint32_t kMaxNegotiatedApiVersion = VK_API_VERSION_1_3;
 
 constexpr uint32_t kAllResourceIds[] = {
     255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266,
@@ -51,13 +61,20 @@ bool create_instance_and_device(VulkanState &out) {
         return false;
     }
 
+    // Negotiate instead of hardcoding 1.1: request whatever the loader can
+    // actually give us, capped at kMaxNegotiatedApiVersion. Requesting an
+    // apiVersion the driver doesn't support just makes vkCreateInstance
+    // fail on some older loaders, so this must go through
+    // vkEnumerateInstanceVersion (Vulkan 1.1+) rather than being probed by
+    // trial and error.
+    const uint32_t negotiated = query_negotiated_instance_api_version();
     const VkApplicationInfo appInfo{
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName = "lsfg-android",
         .applicationVersion = VK_MAKE_VERSION(0, 1, 0),
         .pEngineName = "lsfg-vk",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        .apiVersion = VK_API_VERSION_1_1,
+        .apiVersion = negotiated != 0 ? negotiated : VK_API_VERSION_1_1,
     };
 
     const VkInstanceCreateInfo instInfo{
@@ -148,8 +165,9 @@ int probe_shaders_on_device(const std::string &cacheDir) {
 
     int loaded = 0;
     int rejected = 0;
-    for (uint32_t id : kAllResourceIds) {
-        auto spirv = load_cached_spirv(cacheDir, id);
+    for (uint32_t baseId : kAllResourceIds) {
+        const uint32_t id = baseId + kFp32SpirvIdOffset;
+        auto spirv = load_cached_spirv(cacheDir, id, ShaderCache::Fp32Spirv);
         if (spirv.empty() || (spirv.size() % 4) != 0) {
             LOGE("SPIR-V resource %u missing or malformed (%zu bytes)", id, spirv.size());
             destroy(vk);
@@ -241,8 +259,8 @@ bool device_supports_float16() {
 bool device_supports_vulkan_memory_model() {
     // VulkanMemoryModel is core-promoted in 1.2 (queryable via
     // VkPhysicalDeviceVulkan12Features); on 1.1 it's gated by
-    // VK_KHR_vulkan_memory_model. We accept either signal — both gate the same
-    // OpCapability VulkanMemoryModel that the bundled DXBC translator emits.
+    // VK_KHR_vulkan_memory_model. We accept either signal. Not currently
+    // consumed by the render loop — see android_vk_probe.hpp.
     if (volkInitialize() != VK_SUCCESS) {
         return false;
     }
@@ -309,6 +327,212 @@ bool device_supports_vulkan_memory_model() {
     }
     vkDestroyInstance(instance, nullptr);
     return ok;
+}
+
+uint32_t query_negotiated_instance_api_version() {
+    if (volkInitialize() != VK_SUCCESS) {
+        return 0;
+    }
+    // vkEnumerateInstanceVersion itself requires a Vulkan 1.1+ loader to
+    // even be resolvable; volk gives us a null pointer instead of a crash
+    // if the loader is older than that, in which case the device is 1.0-only.
+    uint32_t loaderVersion = VK_API_VERSION_1_0;
+    if (vkEnumerateInstanceVersion != nullptr) {
+        if (vkEnumerateInstanceVersion(&loaderVersion) != VK_SUCCESS) {
+            loaderVersion = VK_API_VERSION_1_0;
+        }
+    }
+    return std::min(loaderVersion, kMaxNegotiatedApiVersion);
+}
+
+std::string format_vulkan_api_version(uint32_t apiVersion) {
+    if (apiVersion == 0) {
+        return "unknown";
+    }
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%u.%u.%u",
+              VK_VERSION_MAJOR(apiVersion),
+              VK_VERSION_MINOR(apiVersion),
+              VK_VERSION_PATCH(apiVersion));
+    return std::string(buf);
+}
+
+std::string get_vulkan_device_api_version_string() {
+    // Cached: the driver's reported apiVersion can't change mid-session,
+    // and probing it means a full VkInstance create/destroy. Before this
+    // cache, the Device Info card and get_vulkan_gpu_info() below each did
+    // their own separate probe — up to 5 VkInstance round-trips just to
+    // paint one settings screen.
+    static std::mutex mutex;
+    static std::string cached;
+    static bool haveCached = false;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (haveCached) {
+        return cached;
+    }
+
+    if (volkInitialize() != VK_SUCCESS) {
+        cached = "unknown";
+        haveCached = true;
+        return cached;
+    }
+    const uint32_t negotiated = query_negotiated_instance_api_version();
+    const VkApplicationInfo appInfo{
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        .pApplicationName = "lsfg-android",
+        .applicationVersion = VK_MAKE_VERSION(0, 1, 0),
+        .pEngineName = "lsfg-vk",
+        .engineVersion = VK_MAKE_VERSION(1, 0, 0),
+        .apiVersion = negotiated != 0 ? negotiated : VK_API_VERSION_1_1,
+    };
+    const VkInstanceCreateInfo instInfo{
+        .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        .pApplicationInfo = &appInfo,
+    };
+    VkInstance instance = VK_NULL_HANDLE;
+    if (vkCreateInstance(&instInfo, nullptr, &instance) != VK_SUCCESS) {
+        cached = "unknown";
+        haveCached = true;
+        return cached;
+    }
+    volkLoadInstance(instance);
+
+    uint32_t count = 0;
+    vkEnumeratePhysicalDevices(instance, &count, nullptr);
+    if (count == 0) {
+        vkDestroyInstance(instance, nullptr);
+        cached = "unknown";
+        haveCached = true;
+        return cached;
+    }
+    std::vector<VkPhysicalDevice> phys(count);
+    vkEnumeratePhysicalDevices(instance, &count, phys.data());
+
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(phys[0], &props);
+    vkDestroyInstance(instance, nullptr);
+    cached = format_vulkan_api_version(props.apiVersion);
+    haveCached = true;
+    return cached;
+}
+
+namespace {
+
+std::string decode_vendor(uint32_t vendorId) {
+    // PCI vendor IDs — the same ones Vulkan reports on mobile GPUs even
+    // though there's no literal PCI bus involved.
+    switch (vendorId) {
+        case 0x5143: return "Qualcomm (Adreno)";
+        case 0x13B5: return "ARM (Mali)";
+        case 0x1010: return "Imagination (PowerVR)";
+        case 0x10DE: return "NVIDIA";
+        case 0x1002: return "AMD";
+        case 0x8086: return "Intel";
+        case 0x1AE0: return "Google (Swiftshader/Angle)";
+        default: {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "0x%04X", vendorId);
+            return std::string(buf);
+        }
+    }
+}
+
+std::string decode_device_type(VkPhysicalDeviceType type) {
+    switch (type) {
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return "integrated";
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:   return "discrete";
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:    return "virtual";
+        case VK_PHYSICAL_DEVICE_TYPE_CPU:            return "cpu";
+        default:                                      return "other";
+    }
+}
+
+} // namespace
+
+GpuInfo get_vulkan_gpu_info() {
+    // Cached for the same reason as get_vulkan_device_api_version_string()
+    // above: vendor/type/driver/VRAM are all static for the process
+    // lifetime, but the Device Info card calls this once per field (4
+    // separate JNI getters), which used to mean 4 separate VkInstance
+    // create/destroy cycles just to render one card.
+    static std::mutex mutex;
+    static GpuInfo cached;
+    static bool haveCached = false;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (haveCached) {
+        return cached;
+    }
+
+    GpuInfo info;
+    if (volkInitialize() != VK_SUCCESS) {
+        cached = info;
+        haveCached = true;
+        return cached;
+    }
+    const uint32_t negotiated = query_negotiated_instance_api_version();
+    const VkApplicationInfo appInfo{
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        .pApplicationName = "lsfg-android",
+        .applicationVersion = VK_MAKE_VERSION(0, 1, 0),
+        .pEngineName = "lsfg-vk",
+        .engineVersion = VK_MAKE_VERSION(1, 0, 0),
+        .apiVersion = negotiated != 0 ? negotiated : VK_API_VERSION_1_1,
+    };
+    const VkInstanceCreateInfo instInfo{
+        .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        .pApplicationInfo = &appInfo,
+    };
+    VkInstance instance = VK_NULL_HANDLE;
+    if (vkCreateInstance(&instInfo, nullptr, &instance) != VK_SUCCESS) {
+        cached = info;
+        haveCached = true;
+        return cached;
+    }
+    volkLoadInstance(instance);
+
+    uint32_t count = 0;
+    vkEnumeratePhysicalDevices(instance, &count, nullptr);
+    if (count == 0) {
+        vkDestroyInstance(instance, nullptr);
+        cached = info;
+        haveCached = true;
+        return cached;
+    }
+    std::vector<VkPhysicalDevice> phys(count);
+    vkEnumeratePhysicalDevices(instance, &count, phys.data());
+    const VkPhysicalDevice pd = phys[0];
+
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(pd, &props);
+    info.vendor = decode_vendor(props.vendorID);
+    info.deviceType = decode_device_type(props.deviceType);
+    // Driver version encoding is vendor-specific (NVIDIA packs differently
+    // from everyone else); the generic VK_VERSION_* macros are correct for
+    // the common case (Qualcomm/ARM/Imagination, all of Android's mobile
+    // GPU vendors) and merely imprecise — not wrong — for NVIDIA/Intel.
+    char driverBuf[32];
+    snprintf(driverBuf, sizeof(driverBuf), "%u.%u.%u",
+              VK_VERSION_MAJOR(props.driverVersion),
+              VK_VERSION_MINOR(props.driverVersion),
+              VK_VERSION_PATCH(props.driverVersion));
+    info.driverVersion = driverBuf;
+
+    VkPhysicalDeviceMemoryProperties memProps{};
+    vkGetPhysicalDeviceMemoryProperties(pd, &memProps);
+    VkDeviceSize largestDeviceLocalHeap = 0;
+    for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) {
+        if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+            largestDeviceLocalHeap = std::max(largestDeviceLocalHeap, memProps.memoryHeaps[i].size);
+        }
+    }
+    if (largestDeviceLocalHeap > 0) {
+        info.deviceLocalHeapMb = static_cast<long long>(largestDeviceLocalHeap / (1024 * 1024));
+    }
+
+    vkDestroyInstance(instance, nullptr);
+    cached = info;
+    haveCached = true;
+    return cached;
 }
 
 } // namespace lsfg_android

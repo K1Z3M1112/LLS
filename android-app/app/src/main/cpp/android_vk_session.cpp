@@ -188,12 +188,15 @@ int create_session(VulkanSession &out) {
             vkGetInstanceProcAddr(out.instance, "vkGetPhysicalDeviceSurfaceFormatsKHR"));
         out.pfnGetPhysicalDeviceSurfaceSupportKHR = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>(
             vkGetInstanceProcAddr(out.instance, "vkGetPhysicalDeviceSurfaceSupportKHR"));
+        out.pfnGetPhysicalDeviceSurfacePresentModesKHR = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfacePresentModesKHR>(
+            vkGetInstanceProcAddr(out.instance, "vkGetPhysicalDeviceSurfacePresentModesKHR"));
 
         if (out.pfnCreateAndroidSurfaceKHR != nullptr &&
             out.pfnDestroySurfaceKHR != nullptr &&
             out.pfnGetPhysicalDeviceSurfaceCapabilitiesKHR != nullptr &&
             out.pfnGetPhysicalDeviceSurfaceFormatsKHR != nullptr &&
-            out.pfnGetPhysicalDeviceSurfaceSupportKHR != nullptr) {
+            out.pfnGetPhysicalDeviceSurfaceSupportKHR != nullptr &&
+            out.pfnGetPhysicalDeviceSurfacePresentModesKHR != nullptr) {
             LOGI("vkCreateAndroidSurfaceKHR and related WSI functions resolved and cached on session");
         } else {
             LOGW("WSI surface functions unresolvable on this driver — disabling WSI");
@@ -265,8 +268,8 @@ int create_session(VulkanSession &out) {
                 hasSwapchainDevExt = true;
             }
         } else {
-            // Robustness2 has a dedicated INFO message below explaining the
-            // automatic fallback path; don't double-log it as a warning.
+            // Robustness2 has a dedicated INFO message below; keep this unrelated
+            // optional-extension diagnostic separate from presentation mode.
             if (std::strcmp(opt, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME) != 0) {
                 LOGW("Optional extension %s not available", opt);
             }
@@ -274,7 +277,7 @@ int create_session(VulkanSession &out) {
     }
     out.hasSwapchain = hasSurfaceExts && hasSwapchainDevExt;
     if (!out.hasSwapchain) {
-        LOGW("WSI path disabled (surface=%d, swapchain=%d); falling back to CPU blit for output",
+        LOGE("MAILBOX WSI unavailable (surface=%d, swapchain=%d); presentation path is disabled",
              (int)hasSurfaceExts, (int)hasSwapchainDevExt);
     }
 
@@ -315,6 +318,44 @@ int create_session(VulkanSession &out) {
         // feature — visually identical, ~zero perf cost. This is informational,
         // not an error.
         LOGI("VK_EXT_robustness2 absent — using 1x1 fallback descriptor image (no functional impact)");
+    }
+
+    // Probe whether OPAQUE_FD is actually an *exportable* handle type for a
+    // plain binary semaphore on this physical device. The VK_KHR_external_semaphore_fd
+    // extension being present (checked above, and required) only means the
+    // driver implements *some* fd-based handle type — on Android that is
+    // frequently SYNC_FD only (Mali, and historically Adreno/PowerVR), used
+    // for native fence interop, not OPAQUE_FD (the desktop-Linux-style opaque
+    // payload that framegen's own Semaphore(fd) import path requires). Doing
+    // this check once here — instead of discovering it via a failed
+    // vkCreateSemaphore/vkGetSemaphoreFdKHR call on every single frame — lets
+    // the render loop pick the right synchronization strategy up front.
+    {
+        const VkPhysicalDeviceExternalSemaphoreInfo extSemInfo{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
+            .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+        };
+        VkExternalSemaphoreProperties extSemProps{
+            .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
+        };
+        vkGetPhysicalDeviceExternalSemaphoreProperties(out.physicalDevice, &extSemInfo, &extSemProps);
+        out.hasExportableOpaqueFdSemaphore =
+            (extSemProps.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT) != 0;
+
+        const VkPhysicalDeviceExternalSemaphoreInfo syncExtSemInfo{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
+            .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+        };
+        VkExternalSemaphoreProperties syncExtSemProps{
+            .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
+        };
+        vkGetPhysicalDeviceExternalSemaphoreProperties(out.physicalDevice, &syncExtSemInfo, &syncExtSemProps);
+        out.hasExportableSyncFdSemaphore =
+            (syncExtSemProps.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT) != 0;
+
+        LOGI("Cross-device semaphore export: OPAQUE_FD=%s SYNC_FD=%s",
+             out.hasExportableOpaqueFdSemaphore ? "supported" : "no",
+             out.hasExportableSyncFdSemaphore ? "supported" : "no");
     }
 
     // Query optional feature support before requesting them in vkCreateDevice.
@@ -427,45 +468,39 @@ int create_session(VulkanSession &out) {
 
 bool acquireCommandRing(VulkanSession &vk, VkCommandBuffer &outCb, VkFence &outFence) {
     if (vk.device == VK_NULL_HANDLE) return false;
-    const uint32_t idx = vk.ringNext;
-    vk.ringNext = (vk.ringNext + 1) % kCommandRingSize;
 
-    VkFence fence = vk.ringFences[idx];
-    VkCommandBuffer cb = vk.ringCommandBuffers[idx];
+    // Presentation is fire-and-forget from the CPU side: never block waiting for
+    // a previous GPU submission. Probe the ring fences and take the first slot
+    // that is already idle. If every slot is still in flight, skip this frame
+    // instead of adding latency.
+    for (uint32_t scan = 0; scan < kCommandRingSize; ++scan) {
+        const uint32_t idx = (vk.ringNext + scan) % kCommandRingSize;
+        VkFence fence = vk.ringFences[idx];
+        VkCommandBuffer cb = vk.ringCommandBuffers[idx];
 
-    // Wait for the previous submission on this slot to retire — only if it
-    // was actually armed. First use of each slot skips the wait because the
-    // fence starts unsignaled and no previous submit targeted it.
-    //
-    // Don't proceed past a timeout: vkResetFences on an unsignaled (still
-    // pending) fence is undefined behaviour per the Vulkan spec and has been
-    // observed to corrupt driver state on Adreno, killing the process on a
-    // subsequent submit. Better to fail the acquire and let the caller skip
-    // this frame.
-    if (vk.ringFenceArmed[idx]) {
-        // 500 ms is a generous upper bound: a frame that takes this long on
-        // the compute queue is catastrophic and we want to surface it as a
-        // warning rather than deadlock forever.
-        const VkResult r = vk.fn.vkWaitForFences(vk.device, 1, &fence,
-                                                 VK_TRUE, 500ULL * 1'000'000ULL);
-        if (r != VK_SUCCESS) {
-            LOGW("acquireCommandRing: vkWaitForFences slot=%u returned %d — skipping frame", idx, (int)r);
-            return false;
+        if (vk.ringFenceArmed[idx]) {
+            const VkResult fenceStatus = vk.fn.vkGetFenceStatus(vk.device, fence);
+            if (fenceStatus != VK_SUCCESS) {
+                continue;
+            }
+            if (vk.fn.vkResetFences(vk.device, 1, &fence) != VK_SUCCESS) {
+                continue;
+            }
+            vk.ringFenceArmed[idx] = false;
         }
-        if (vk.fn.vkResetFences(vk.device, 1, &fence) != VK_SUCCESS) {
-            LOGW("acquireCommandRing: vkResetFences slot=%u failed", idx);
-            return false;
+
+        if (vk.fn.vkResetCommandBuffer(cb, 0) != VK_SUCCESS) {
+            continue;
         }
-        vk.ringFenceArmed[idx] = false;
+
+        vk.ringNext = (idx + 1) % kCommandRingSize;
+        outCb = cb;
+        outFence = fence;
+        return true;
     }
 
-    if (vk.fn.vkResetCommandBuffer(cb, 0) != VK_SUCCESS) {
-        LOGW("vkResetCommandBuffer failed on ring slot %u", idx);
-        return false;
-    }
-    outCb = cb;
-    outFence = fence;
-    return true;
+    // No CPU wait, no sleep, no fallback: caller simply drops this frame.
+    return false;
 }
 
 bool submitCommandRing(VulkanSession &vk, VkCommandBuffer cb, VkFence fence) {
