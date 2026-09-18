@@ -46,7 +46,7 @@ import androidx.navigation.NavHostController
 import com.firstt175.deepdrop.R
 import com.firstt175.deepdrop.session.diagnostics.AdbDisplayController
 import com.firstt175.deepdrop.session.diagnostics.PermissionsHelper
-import com.firstt175.deepdrop.session.capture.ShizukuDisplayPermission
+import com.firstt175.deepdrop.session.diagnostics.ShizukuDisplayPermission
 import com.firstt175.deepdrop.ui.components.IconBadge
 import com.firstt175.deepdrop.ui.components.LsfgCard
 import com.firstt175.deepdrop.ui.components.LsfgSecondaryButton

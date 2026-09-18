@@ -16,31 +16,16 @@
 -keep class * extends android.content.ContentProvider
 -keep class * extends android.accessibilityservice.AccessibilityService
 
-# AIDL-generated stubs for Shizuku user-service IPC.
--keep class com.firstt175.deepdrop.shizuku.** { *; }
--keep interface com.firstt175.deepdrop.shizuku.** { *; }
-
 # Shizuku API uses reflection / dynamic proxies for the manager service binder.
 -keep class rikka.shizuku.** { *; }
 -keep interface rikka.shizuku.** { *; }
 -keep class moe.shizuku.** { *; }
 -dontwarn rikka.shizuku.**
 
-# Shizuku spawns ShizukuCaptureUserService in a separate process and instantiates
-# it by class name via reflection (Class.forName(...).newInstance()). The class
-# name is also passed to bindUserService through ComponentName, which uses the
-# obfuscated name. Keep both the class and its no-arg constructor verbatim.
--keep class com.firstt175.deepdrop.session.capture.ShizukuCaptureUserService { *; }
-
-# libsu spawns a remote root process and resolves classes by name across the IPC boundary.
+# libsu (core) is only used for the read-only root status row on the device profile screen.
 -keep class com.topjohnwu.superuser.** { *; }
 -keep interface com.topjohnwu.superuser.** { *; }
 -dontwarn com.topjohnwu.superuser.**
-
-# RootCaptureService extends libsu's RootService and is instantiated by name in
-# the spawned root process. Same constraint as ShizukuCaptureUserService.
--keep class com.firstt175.deepdrop.session.capture.RootCaptureService { *; }
--keep class com.firstt175.deepdrop.session.capture.RootCaptureService$* { *; }
 
 # Compose runtime needs Signature/InnerClasses for state-handling reflection.
 -keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, SourceFile, LineNumberTable

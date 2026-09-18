@@ -97,7 +97,7 @@ import com.firstt175.deepdrop.session.diagnostics.DisplayOverrideState
 import com.firstt175.deepdrop.session.service.LsfgForegroundService
 import com.firstt175.deepdrop.session.LsfgLog
 import com.firstt175.deepdrop.session.diagnostics.PhysicalDisplayInfo
-import com.firstt175.deepdrop.session.capture.ShizukuDisplayPermission
+import com.firstt175.deepdrop.session.diagnostics.ShizukuDisplayPermission
 import com.firstt175.deepdrop.ui.components.LsfgCard
 import com.firstt175.deepdrop.ui.components.LsfgLogoMark
 import com.firstt175.deepdrop.ui.components.SectionHeader
