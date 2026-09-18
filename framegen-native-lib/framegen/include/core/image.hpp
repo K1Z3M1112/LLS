@@ -114,6 +114,11 @@ namespace LSFG::Core {
         VkFormat format{};
         VkImageAspectFlags aspectFlags{};
         bool externalShared{false};
+#ifdef __ANDROID__
+        // Keep the Android HardwareBuffer alive for as long as an imported
+        // Vulkan image may reference its external memory.
+        std::shared_ptr<AHardwareBuffer> ahbOwner;
+#endif
     };
 
 }

@@ -43,10 +43,13 @@ Generate::Generate(Vulkan& vk,
         auto& pass = this->passes.emplace_back();
         pass.buffer = vk.resources.getBuffer(vk.device,
             static_cast<float>(i + 1) / static_cast<float>(vk.generationCount + 1));
-        for (size_t j = 0; j < 2; j++) {
-            pass.descriptorSet.at(j) = Core::DescriptorSet(vk.device, vk.descriptorPool,
+        for (size_t slot = 0; slot < 8; slot++) {
+            this->inputImg1Ring.at(slot) = this->inImg1;
+            this->inputImg2Ring.at(slot) = this->inImg2;
+            for (size_t j = 0; j < 2; j++) {
+            pass.descriptorSet.at(slot).at(j) = Core::DescriptorSet(vk.device, vk.descriptorPool,
                 this->shaderModule);
-            pass.descriptorSet.at(j).update(vk.device)
+            pass.descriptorSet.at(slot).at(j).update(vk.device)
                 .add(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, pass.buffer)
                 .add(VK_DESCRIPTOR_TYPE_SAMPLER, this->samplers)
                 .add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, j == 0 ? this->inImg2 : this->inImg1)
@@ -56,11 +59,40 @@ Generate::Generate(Vulkan& vk,
                 .add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, this->inImg5)
                 .add(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, this->outImgs.at(i))
                 .build();
+            }
         }
     }
 }
 
-void Generate::Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount, uint64_t pass_idx) {
+#ifdef __ANDROID__
+void Generate::bindExternalInputImages(Vulkan& vk, size_t slot, const Core::Image& in0, const Core::Image& in1) {
+    slot %= 8;
+    // Share the exact Core::Image handles imported by Mipmaps. No second
+    // VkImage import is created, so both shader stages operate on the same
+    // external image object and its shared layout/ownership state.
+    this->inputImg1Ring.at(slot) = in0;
+    this->inputImg2Ring.at(slot) = in1;
+    for (auto& pass : this->passes) {
+        for (size_t j = 0; j < 2; j++)
+            pass.descriptorSet.at(slot).at(j).update(vk.device)
+                .add(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, pass.buffer)
+                .add(VK_DESCRIPTOR_TYPE_SAMPLER, this->samplers)
+                .add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, j == 0 ? this->inputImg2Ring.at(slot) : this->inputImg1Ring.at(slot))
+                .add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, j == 0 ? this->inputImg1Ring.at(slot) : this->inputImg2Ring.at(slot))
+                .add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, this->inImg3)
+                .add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, this->inImg4)
+                .add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, this->inImg5)
+                .add(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, this->outImgs.at(&pass - this->passes.data()))
+                .build();
+    }
+}
+#endif
+
+Core::Image& Generate::getInputImage(size_t slot, size_t parity) {
+    return (parity % 2 == 0) ? this->inputImg1Ring.at(slot % 8) : this->inputImg2Ring.at(slot % 8);
+}
+
+void Generate::Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount, uint64_t pass_idx, size_t inputSlot) {
     auto& pass = this->passes.at(pass_idx);
 
     // first pass
@@ -68,9 +100,12 @@ void Generate::Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount, uin
     const uint32_t threadsX = (extent.width + 15) >> 4;
     const uint32_t threadsY = (extent.height + 15) >> 4;
 
+    const size_t slot = inputSlot % 8;
+    Core::Image& input1 = this->inputImg1Ring.at(slot);
+    Core::Image& input2 = this->inputImg2Ring.at(slot);
     Utils::BarrierBuilder(buf)
-        .addW2R(this->inImg1)
-        .addW2R(this->inImg2)
+        .addW2R(input1)
+        .addW2R(input2)
         .addW2R(this->inImg3)
         .addW2R(this->inImg4)
         .addW2R(this->inImg5)
@@ -78,7 +113,7 @@ void Generate::Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount, uin
         .build();
 
     this->pipeline.bind(buf);
-    pass.descriptorSet.at(frameCount % 2).bind(buf, this->pipeline);
+    pass.descriptorSet.at(slot).at(frameCount % 2).bind(buf, this->pipeline);
     buf.dispatch(threadsX, threadsY, 1);
 }
 
@@ -106,10 +141,13 @@ Generate::Generate(Vulkan& vk,
         auto& pass = this->passes.emplace_back();
         pass.buffer = vk.resources.getBuffer(vk.device,
             static_cast<float>(i + 1) / static_cast<float>(vk.generationCount + 1));
-        for (size_t j = 0; j < 2; j++) {
-            pass.descriptorSet.at(j) = Core::DescriptorSet(vk.device, vk.descriptorPool,
+        for (size_t slot = 0; slot < 8; slot++) {
+            this->inputImg1Ring.at(slot) = this->inImg1;
+            this->inputImg2Ring.at(slot) = this->inImg2;
+            for (size_t j = 0; j < 2; j++) {
+            pass.descriptorSet.at(slot).at(j) = Core::DescriptorSet(vk.device, vk.descriptorPool,
                 this->shaderModule);
-            pass.descriptorSet.at(j).update(vk.device)
+            pass.descriptorSet.at(slot).at(j).update(vk.device)
                 .add(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, pass.buffer)
                 .add(VK_DESCRIPTOR_TYPE_SAMPLER, this->samplers)
                 .add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, j == 0 ? this->inImg2 : this->inImg1)
@@ -119,6 +157,7 @@ Generate::Generate(Vulkan& vk,
                 .add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, this->inImg5)
                 .add(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, this->outImgs.at(i))
                 .build();
+            }
         }
     }
 }

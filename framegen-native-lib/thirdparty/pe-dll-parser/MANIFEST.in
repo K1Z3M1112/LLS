@@ -1,5 +1,0 @@
-include VERSION
-include pepy/README.md
-include pepy/*.cpp
-include pe-parser-library/include/pe-parse/*.h
-include pe-parser-library/src/*.cpp

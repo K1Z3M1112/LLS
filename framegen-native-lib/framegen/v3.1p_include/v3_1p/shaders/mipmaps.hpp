@@ -11,6 +11,10 @@
 
 #include <array>
 #include <cstdint>
+#include <cstddef>
+#ifdef __ANDROID__
+struct AHardwareBuffer;
+#endif
 
 namespace LSFG_3_1P::Shaders {
 
@@ -36,7 +40,13 @@ namespace LSFG_3_1P::Shaders {
         ///
         /// Dispatch the shaderchain.
         ///
-        void Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount);
+        void Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount, size_t inputSlot = 0);
+#ifdef __ANDROID__
+        // Rebind one in-flight ring slot to externally-owned AHardwareBuffers.
+        // This changes descriptors/handles only; no pixel copy is performed.
+        void bindExternalInputs(Vulkan& vk, size_t slot, AHardwareBuffer* in0, AHardwareBuffer* in1);
+        Core::Image& getInputImage(size_t slot, size_t parity);
+#endif
 
         /// Get the output images.
         [[nodiscard]] const auto& getOutImages() const { return this->outImgs; }
@@ -52,9 +62,11 @@ namespace LSFG_3_1P::Shaders {
         Core::Pipeline pipeline;
         Core::Buffer buffer;
         Core::Sampler sampler;
-        std::array<Core::DescriptorSet, 2> descriptorSets;
+        std::array<std::array<Core::DescriptorSet, 2>, 8> descriptorSets;
 
         Core::Image inImg_0, inImg_1;
+        std::array<Core::Image, 8> inputImg0Ring;
+        std::array<Core::Image, 8> inputImg1Ring;
         std::array<Core::Image, 7> outImgs;
     };
 

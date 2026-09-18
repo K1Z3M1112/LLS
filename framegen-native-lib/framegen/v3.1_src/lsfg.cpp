@@ -69,6 +69,10 @@ int32_t LSFG_3_1::createContext(
     return id;
 }
 
+void LSFG_3_1::setExternalSemaphoreFdHandleType(VkExternalSemaphoreHandleTypeFlagBits type) {
+    Core::Semaphore::setExternalFdHandleType(type);
+}
+
 void LSFG_3_1::presentContext(int32_t id, int inSem, const std::vector<int>& outSem) {
     if (!instance.has_value() || !device.has_value())
         throw LSFG::vulkan_error(VK_ERROR_INITIALIZATION_FAILED, "LSFG not initialized");
@@ -78,6 +82,19 @@ void LSFG_3_1::presentContext(int32_t id, int inSem, const std::vector<int>& out
         throw LSFG::vulkan_error(VK_ERROR_UNKNOWN, "Context not found");
 
     it->second.present(*device, inSem, outSem);
+#ifdef __ANDROID__
+    pendingPresents.push_back(id);
+#endif
+}
+
+void LSFG_3_1::presentContextAHB(int32_t id, AHardwareBuffer* current, AHardwareBuffer* previous,
+        int inSem, const std::vector<int>& outSem) {
+    if (!instance.has_value() || !device.has_value())
+        throw LSFG::vulkan_error(VK_ERROR_INITIALIZATION_FAILED, "LSFG not initialized");
+    auto it = contexts.find(id);
+    if (it == contexts.end())
+        throw LSFG::vulkan_error(VK_ERROR_UNKNOWN, "Context not found");
+    it->second.presentAHB(*device, current, previous, inSem, outSem);
 #ifdef __ANDROID__
     pendingPresents.push_back(id);
 #endif
