@@ -12,7 +12,6 @@ import com.firstt175.deepdrop.ui.screens.LegalScreen
 import com.firstt175.deepdrop.ui.screens.OverlayDisplayScreen
 import com.firstt175.deepdrop.ui.screens.SettingsHubScreen
 import com.firstt175.deepdrop.ui.screens.SetupScreen
-import com.firstt175.deepdrop.ui.screens.WarpLoadingScreen
 import com.firstt175.deepdrop.ui.screens.RecordingGalleryScreen
 
 import androidx.compose.runtime.Composable
@@ -25,7 +24,6 @@ import com.firstt175.deepdrop.prefs.FirstRunPrefs
 
 object Routes {
     const val DISCLOSURE = "disclosure"
-    const val LOADING = "loading"
     const val HOME = "home"
     const val FRAMEGEN = "framegen"
     const val LEGAL = "legal"
@@ -45,9 +43,9 @@ fun LsfgNavHost(navController: NavHostController) {
     val context = LocalContext.current
     // Decided once when the NavHost is created (i.e. once per process start),
     // which is exactly what we want: the disclosure only needs to appear
-    // ahead of the very first loading screen a user ever sees.
+    // ahead of the very first screen a user ever sees.
     val startDestination = remember {
-        if (FirstRunPrefs.isDisclosureAcknowledged(context)) Routes.LOADING else Routes.DISCLOSURE
+        if (FirstRunPrefs.isDisclosureAcknowledged(context)) Routes.HOME else Routes.DISCLOSURE
     }
 
     // Keep navigation instant. Page-transition animations are visually nice,
@@ -59,7 +57,6 @@ fun LsfgNavHost(navController: NavHostController) {
         startDestination = startDestination,
     ) {
         composable(Routes.DISCLOSURE) { AppDisclosureScreen(navController) }
-        composable(Routes.LOADING) { WarpLoadingScreen(navController) }
         composable(Routes.HOME) { GameLauncherScreen(navController) }
         composable(Routes.FRAMEGEN) { FrameGenScreen(navController) }
         composable(Routes.LEGAL) { LegalScreen(navController) }

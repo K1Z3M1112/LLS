@@ -176,7 +176,7 @@ class OverlayManager(private val ctx: Context) {
     private var recordingView: TextView? = null
     // Single container binding fps/graph/stats into one HUD unit — see show().
     private var hudClusterView: LinearLayout? = null
-    private var loadingView: TextView? = null
+    private var statusView: TextView? = null
     @Volatile private var firstFrameDisplayed = false
     private var insetsListener: Any? = null
     private var internalInsetsListener: Any? = null
@@ -190,7 +190,7 @@ class OverlayManager(private val ctx: Context) {
     private var surfaceLostListener: (() -> Unit)? = null
     private var overlayWidth: Int = 0
     private var overlayHeight: Int = 0
-    // Density last used to size the fps/graph/loading HUD views. Tracked
+    // Density last used to size the fps/graph/status HUD views. Tracked
     // separately from overlayWidth/Height because a `wm density` override
     // can change density without necessarily changing the reported pixel
     // dimensions in the same tick — see syncOverlayGeometry().
@@ -342,11 +342,10 @@ class OverlayManager(private val ctx: Context) {
 
         // FrameLayout background stays transparent — TextureView composites into
         // its parent's hardware layer, but we still want no opaque fill behind it
-        // before the first frame arrives so the loading status text remains
+        // before the first frame arrives so the status text remains
         // visible against the underlying app instead of a black slab.
         val layout = FrameLayout(ctx)
-        val loading = TextView(ctx).apply {
-            text = "Loading…"
+        val status = TextView(ctx).apply {
             setTextColor(Color.WHITE)
             setBackgroundColor(0x99000000.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
@@ -354,7 +353,7 @@ class OverlayManager(private val ctx: Context) {
             val padV = dp(16)
             setPadding(padH, padV, padH, padV)
             gravity = Gravity.CENTER
-            visibility = View.VISIBLE
+            visibility = View.GONE
         }
         firstFrameDisplayed = false
 
@@ -427,8 +426,8 @@ class OverlayManager(private val ctx: Context) {
                 val n = ++surfaceTextureUpdateCount
                 if (!firstFrameDisplayed) {
                     firstFrameDisplayed = true
-                    loadingView?.post { loadingView?.visibility = View.GONE }
-                    Log.i(TAG, "First overlay frame displayed — hiding loading indicator")
+                    statusView?.post { statusView?.visibility = View.GONE }
+                    Log.i(TAG, "First overlay frame displayed — hiding status indicator")
                 }
                 if (n <= 30 || n % 60 == 0) {
                     Log.d(TAG, "onSurfaceTextureUpdated #$n")
@@ -582,7 +581,7 @@ class OverlayManager(private val ctx: Context) {
             FrameLayout.LayoutParams(overlayWidth, overlayHeight, Gravity.TOP or Gravity.START),
         )
         layout.addView(
-            loading,
+            status,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -605,7 +604,7 @@ class OverlayManager(private val ctx: Context) {
         graphView = graph
         statsView = stats
         hudClusterView = hudCluster
-        loadingView = loading
+        statusView = status
         textureView = tex
 
         wm.addView(layout, params)
@@ -671,26 +670,13 @@ class OverlayManager(private val ctx: Context) {
 
     fun updateStatus(line: String) {
         if (firstFrameDisplayed) return
-        val v = loadingView ?: return
+        val v = statusView ?: return
         v.post {
             if (!firstFrameDisplayed) {
-                v.text = line.ifBlank { "Loading…" }
-                v.visibility = View.VISIBLE
+                v.text = line
+                v.visibility = if (line.isBlank()) View.GONE else View.VISIBLE
             }
         }
-    }
-
-    fun showLoading(line: String = "Loading…") {
-        firstFrameDisplayed = false
-        loadingView?.post {
-            loadingView?.text = line
-            loadingView?.visibility = View.VISIBLE
-        }
-    }
-
-    fun hideLoading() {
-        firstFrameDisplayed = true
-        loadingView?.post { loadingView?.visibility = View.GONE }
     }
 
     // "<backend> · POST · Input: WxH → Output: WxH" — set once per (re)init by
@@ -855,7 +841,7 @@ class OverlayManager(private val ctx: Context) {
         statsView = null
         hudClusterView = null
         recordingView = null
-        loadingView = null
+        statusView = null
         firstFrameDisplayed = false
         hostWindowManager = null
     }
@@ -1150,7 +1136,7 @@ class OverlayManager(private val ctx: Context) {
 
     /**
      * Re-applies dp/sp-based sizing to the fps text, frame graph, stats line,
-     * and loading indicator after a resolution or DPI change (rotation into/
+     * and status indicator after a resolution or DPI change (rotation into/
      * out of landscape included). [syncOverlayGeometry] resizes the
      * game-frame TextureView itself; this is the HUD-chrome counterpart —
      * without it these views keep whatever pixel size they were built with and
@@ -1158,7 +1144,7 @@ class OverlayManager(private val ctx: Context) {
      */
     private fun relayoutHud() {
         val margin = dp(HUD_MARGIN_DP)
-        loadingView?.apply {
+        statusView?.apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             val padH = dp(28)
             val padV = dp(16)
