@@ -36,17 +36,9 @@
     <!-- Section eyebrows -->
     <string name="section_frame_generation">Frame generation</string>
     <string name="section_overlay_handle">Overlay handle</string>
-    <string name="section_hud">HUD</string>
     <string name="section_trusted_overlay">Touch pass-through</string>
     <string name="param_trusted_overlay">Trusted overlay (Accessibility)</string>
     <string name="param_trusted_overlay_desc">Hosts the overlay as a trusted accessibility surface so taps reach the app underneath on strict devices (e.g. Orange Pi 5 Ultra) where they would otherwise be blocked. Trade-off: while a session is running the overlay covers the status bar and navigation bar — you cannot pull down notifications or tap home/back. Leave OFF if your device passes taps already; turn ON only when you cannot tap through. Requires the LSFG-Android+ accessibility service to be enabled.</string>
-    <string name="section_capture_mode">Capture mode</string>
-    <string name="capture_mode_mediaprojection">MediaProjection</string>
-    <string name="capture_mode_shizuku">Shizuku capture</string>
-    <string name="capture_mode_root">Root capture</string>
-    <string name="param_frame_graph">Frame pacing graph</string>
-    <string name="param_frame_graph_desc">Show a live plot of generated frame intervals in the overlay. Useful for diagnosing stutter.</string>
-
     <string name="dll_status_none">No Lossless.dll selected yet.</string>
     <string name="dll_pick_button">Select Lossless.dll</string>
     <string name="dll_reextract_button">Re-extract shaders</string>
@@ -69,8 +61,6 @@
     <string name="param_hdr_desc">Enable only if your device and game output HDR.</string>
     <string name="param_framegen_fp16">FP16 frame-gen shaders</string>
     <string name="param_framegen_fp16_desc">Use the half-precision shader variants pre-compiled inside Lossless.dll instead of the full-precision FP32 set. Reduces GPU load and memory bandwidth. Quality is virtually identical; falls back to FP32 automatically if anything goes wrong.</string>
-    <string name="param_fps_counter">FPS counter on overlay</string>
-    <string name="param_fps_counter_desc">Show a small FPS readout in the top-left of the overlay. MediaProjection counts visible capture frames; Shizuku capture counts privileged UID-filtered target frames.</string>
     <string name="param_drawer_edge">Drawer handle position</string>
     <string name="drawer_edge_left">Left</string>
     <string name="drawer_edge_right">Right</string>
