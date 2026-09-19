@@ -2,7 +2,6 @@ package com.firstt175.deepdrop.ui
 
 import com.firstt175.deepdrop.prefs.LsfgConfig
 import com.firstt175.deepdrop.prefs.AiEngine
-import com.firstt175.deepdrop.prefs.CaptureSource
 import com.firstt175.deepdrop.prefs.DrawerEdge
 import com.firstt175.deepdrop.prefs.FramegenBackend
 import com.firstt175.deepdrop.prefs.LsfgPreferences
@@ -31,7 +30,6 @@ private val shared: MutableStateFlow<LsfgConfig> = MutableStateFlow(
         performanceMode = true,
         hdrMode = false,
         framegenFp16 = true,
-        captureSource = CaptureSource.MEDIA_PROJECTION,
         renderResolutionScale = 0.9f,
         generationDeadlineMs = 0,
         bypassGenDeadlineMs = 0,
@@ -72,6 +70,11 @@ private val shared: MutableStateFlow<LsfgConfig> = MutableStateFlow(
         imageEnhancementSaturation = 1.0f,
         upscaleEnabled = true,
         upscaleFilter = UpscaleFilter.BILINEAR,
+        vkBasaltEnabled = false,
+        vkBasaltEffects = emptyList(),
+        vkBasaltFxDirectory = null,
+        vkBasaltReshadeTexturePath = "",
+        vkBasaltLutFile = "",
     )
 )
 

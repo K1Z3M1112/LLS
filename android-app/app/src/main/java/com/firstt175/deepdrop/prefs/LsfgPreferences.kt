@@ -1,3 +1,9 @@
+
+        private const val KEY_VKBASALT_ENABLED = "vkbasalt_enabled"
+        private const val KEY_VKBASALT_EFFECTS = "vkbasalt_effects"
+        private const val KEY_VKBASALT_FX_DIR = "vkbasalt_fx_dir"
+        private const val KEY_VKBASALT_RESHADE_TEXTURES = "vkbasalt_reshade_textures"
+        private const val KEY_VKBASALT_LUT_FILE = "vkbasalt_lut_file"
 package com.firstt175.deepdrop.prefs
 
 import android.content.Context
@@ -21,7 +27,6 @@ data class LsfgConfig(
      * hardware never sees the toggle.
      */
     val framegenFp16: Boolean,
-    val captureSource: CaptureSource,
     /**
      * Fraction of the display's native resolution to capture and render at,
      * from 1.0 (100%, native) down to 0.0 (0%, capture disabled — floor-clamped
@@ -92,6 +97,11 @@ data class LsfgConfig(
     val imageEnhancementSaturation: Float,
     val upscaleEnabled: Boolean,
     val upscaleFilter: UpscaleFilter,
+    val vkBasaltEnabled: Boolean,
+    val vkBasaltEffects: List<String>,
+    val vkBasaltFxDirectory: String?,
+    val vkBasaltReshadeTexturePath: String,
+    val vkBasaltLutFile: String,
 ) {
 }
 
@@ -198,17 +208,6 @@ enum class OverlayMode(val prefValue: String) {
     }
 }
 
-enum class CaptureSource(val prefValue: String) {
-    MEDIA_PROJECTION("media_projection"),
-    SHIZUKU("shizuku"),
-    ROOT("root");
-
-    companion object {
-        fun fromPref(value: String?): CaptureSource =
-            values().firstOrNull { it.prefValue == value } ?: MEDIA_PROJECTION
-    }
-}
-
 /** Swapchain presentation mode. vkValue is the raw VkPresentModeKHR value
  *  passed straight through to NativeBridge.setPresentMode() — keep it in
  *  sync with the native side's IMMEDIATE=0/MAILBOX=1/FIFO=2 mapping.
@@ -242,7 +241,6 @@ class LsfgPreferences(ctx: Context) {
         performanceMode = prefs.getBoolean(KEY_PERF, true),
         hdrMode = prefs.getBoolean(KEY_HDR, false),
         framegenFp16 = prefs.getBoolean(KEY_FRAMEGEN_FP16, true),
-        captureSource = CaptureSource.fromPref(prefs.getString(KEY_CAPTURE_SOURCE, null)),
         renderResolutionScale = prefs.getFloat(KEY_RENDER_RESOLUTION_SCALE, 0.9f).coerceIn(0.0f, 1.0f),
         generationDeadlineMs = prefs.getInt(KEY_GENERATION_DEADLINE_MS, 0).coerceIn(0, 100),
         bypassGenDeadlineMs = prefs.getInt(KEY_BYPASS_GEN_DEADLINE_MS, 0).coerceIn(0, 100),
@@ -283,6 +281,11 @@ class LsfgPreferences(ctx: Context) {
         imageEnhancementSaturation = prefs.getFloat(KEY_IMAGE_ENHANCEMENT_SATURATION, 1.0f).coerceIn(0f, 2f),
         upscaleEnabled = prefs.getBoolean(KEY_UPSCALE_ENABLED, true),
         upscaleFilter = UpscaleFilter.fromPref(prefs.getString(KEY_UPSCALE_FILTER, null)),
+        vkBasaltEnabled = prefs.getBoolean(KEY_VKBASALT_ENABLED, false),
+        vkBasaltEffects = decodeAiModelGraphs(prefs.getString(KEY_VKBASALT_EFFECTS, null)),
+        vkBasaltFxDirectory = prefs.getString(KEY_VKBASALT_FX_DIR, null),
+        vkBasaltReshadeTexturePath = prefs.getString(KEY_VKBASALT_RESHADE_TEXTURES, ""),
+        vkBasaltLutFile = prefs.getString(KEY_VKBASALT_LUT_FILE, ""),
     )
 
     fun getAutoEnabledApps(): Set<String> =
@@ -355,9 +358,7 @@ class LsfgPreferences(ctx: Context) {
     fun setPerformance(value: Boolean) = prefs.edit().putBoolean(KEY_PERF, value).apply()
     fun setHdr(value: Boolean) = prefs.edit().putBoolean(KEY_HDR, value).apply()
     fun setFramegenFp16(value: Boolean) = prefs.edit().putBoolean(KEY_FRAMEGEN_FP16, value).apply()
-    fun setCaptureSource(value: CaptureSource) = prefs.edit()
-        .putString(KEY_CAPTURE_SOURCE, value.prefValue)
-        .apply()    fun setRenderResolutionScale(value: Float) = prefs.edit()
+    fun setRenderResolutionScale(value: Float) = prefs.edit()
         .putFloat(KEY_RENDER_RESOLUTION_SCALE, value.coerceIn(0.0f, 1.0f))
         .apply()
     fun setLegalAccepted(value: Boolean) = prefs.edit().putBoolean(KEY_LEGAL, value).apply()
@@ -461,6 +462,12 @@ class LsfgPreferences(ctx: Context) {
     fun setUpscaleFilter(value: UpscaleFilter) = prefs.edit()
         .putString(KEY_UPSCALE_FILTER, value.prefValue).apply()
 
+    fun setVkBasaltEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_VKBASALT_ENABLED, value).apply()
+    fun setVkBasaltEffects(value: List<String>) = prefs.edit().putString(KEY_VKBASALT_EFFECTS, value.joinToString("\n")).apply()
+    fun setVkBasaltFxDirectory(value: String?) = prefs.edit().putString(KEY_VKBASALT_FX_DIR, value).apply()
+    fun setVkBasaltReshadeTexturePath(value: String) = prefs.edit().putString(KEY_VKBASALT_RESHADE_TEXTURES, value).apply()
+    fun setVkBasaltLutFile(value: String) = prefs.edit().putString(KEY_VKBASALT_LUT_FILE, value).apply()
+
     /** Maximum capture-to-generation latency in milliseconds. 0 disables the deadline. */
     fun getGenerationDeadlineMs(): Int = prefs.getInt(KEY_GENERATION_DEADLINE_MS, 0).coerceIn(0, 100)
     fun setGenerationDeadlineMs(value: Int) = prefs.edit()
@@ -497,7 +504,6 @@ class LsfgPreferences(ctx: Context) {
         private const val KEY_PERF = "performance"
         private const val KEY_HDR = "hdr"
         private const val KEY_FRAMEGEN_FP16 = "framegen_fp16"
-        private const val KEY_CAPTURE_SOURCE = "capture_source"
         private const val KEY_GENERATION_DEADLINE_MS = "generation_deadline_ms"
         private const val KEY_BYPASS_GEN_DEADLINE_MS = "bypass_gen_deadline_ms"
         private const val KEY_BYPASS_GEN_RESUME_DELAY_MS = "bypass_gen_resume_delay_ms"

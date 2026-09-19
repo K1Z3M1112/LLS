@@ -198,6 +198,7 @@ add_library(lsfg-android SHARED
     lsfg_render_loop.cpp
     crash_reporter.cpp
     gpu_image_enhancement.cpp
+    vkbasalt_bridge.cpp
 )
 
 target_compile_definitions(lsfg-android PRIVATE

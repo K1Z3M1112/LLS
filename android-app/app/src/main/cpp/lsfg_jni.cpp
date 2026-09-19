@@ -10,6 +10,7 @@
 #include "android_shader_loader.hpp"
 #include "android_vk_probe.hpp"
 #include "crash_reporter.hpp"
+#include "vkbasalt_bridge.hpp"
 #include "lsfg_render_loop.hpp"
 #ifdef LSFG_HAVE_NCNN
 #include "NcnnInterpolator.hpp"
@@ -592,4 +593,47 @@ Java_com_firstt175_deepdrop_session_NativeBridge_aiInterpolatePreview(
     (void) outFrame; (void) outIndex; (void) multiplier; (void) flowScale; (void) engine;
     return -1; // lsfg_android::kNcnnErrNotBuilt
 #endif
+}
+
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_firstt175_deepdrop_session_NativeBridge_writeVkBasaltConfig(
+    JNIEnv* env, jobject,
+    jstring configPath, jboolean enabled, jobjectArray effects,
+    jstring reshadeTexturePath, jstring reshadeIncludePath, jboolean depthCapture,
+    jfloat casSharpness, jfloat dlsSharpness, jfloat dlsDenoise,
+    jfloat fxaaQualitySubpix, jfloat fxaaQualityEdgeThreshold,
+    jfloat fxaaQualityEdgeThresholdMin, jfloat smaaThreshold,
+    jint smaaMaxSearchSteps, jint smaaMaxSearchStepsDiag, jint smaaCornerRounding,
+    jstring lutFile) {
+    auto str = [&](jstring value) -> std::string {
+        if (!value) return {};
+        const char* p = env->GetStringUTFChars(value, nullptr);
+        std::string r = p ? p : "";
+        if (p) env->ReleaseStringUTFChars(value, p);
+        return r;
+    };
+    lsfg_android::vkbasalt::Config c;
+    c.enabled = enabled;
+    c.depthCapture = depthCapture;
+    c.casSharpness = casSharpness;
+    c.dlsSharpness = dlsSharpness;
+    c.dlsDenoise = dlsDenoise;
+    c.fxaaQualitySubpix = fxaaQualitySubpix;
+    c.fxaaQualityEdgeThreshold = fxaaQualityEdgeThreshold;
+    c.fxaaQualityEdgeThresholdMin = fxaaQualityEdgeThresholdMin;
+    c.smaaThreshold = smaaThreshold;
+    c.smaaMaxSearchSteps = smaaMaxSearchSteps;
+    c.smaaMaxSearchStepsDiag = smaaMaxSearchStepsDiag;
+    c.smaaCornerRounding = smaaCornerRounding;
+    c.reshadeTexturePath = str(reshadeTexturePath);
+    c.reshadeIncludePath = str(reshadeIncludePath);
+    c.lutFile = str(lutFile);
+    const jsize n = effects ? env->GetArrayLength(effects) : 0;
+    for (jsize i = 0; i < n; ++i) {
+        auto value = static_cast<jstring>(env->GetObjectArrayElement(effects, i));
+        c.effects.push_back(str(value));
+        env->DeleteLocalRef(value);
+    }
+    return lsfg_android::vkbasalt::writeConfig(str(configPath), c) ? JNI_TRUE : JNI_FALSE;
 }
