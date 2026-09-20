@@ -432,7 +432,6 @@ Java_com_firstt175_deepdrop_session_NativeBridge_setPresentMode(
     lsfg_android::setPresentMode(static_cast<int32_t>(mode));
 }
 
-
 extern "C" JNIEXPORT void JNICALL
 Java_com_firstt175_deepdrop_session_NativeBridge_setGenerationDeadlineMs(
         JNIEnv * /*env*/, jobject /*thiz*/, jint deadlineMs) {

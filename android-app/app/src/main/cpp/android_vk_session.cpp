@@ -20,17 +20,25 @@ namespace lsfg_android {
 namespace {
 
 // Required for the AHB <-> VkImage <-> opaque-FD bridge that feeds framegen.
+// The session targets Vulkan 1.1 (see make_instance), so the extensions that were
+// promoted to core in 1.1 are NOT listed here — see kPromotedDeviceExt.
 constexpr const char *kRequiredDeviceExt[] = {
-    VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,                          // dependency of below
     VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,                       // export OPAQUE_FD
-    VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,                       // dependency
     VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,                    // semaphore FDs for framegen
     VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
-    VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME,                 // dependency of AHB ext
-    VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,                     // dedicated alloc for AHB
-    VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,                // dependency
-    VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,                            // dependency
-    VK_KHR_MAINTENANCE1_EXTENSION_NAME,                             // dependency
+};
+
+// Promoted to core in Vulkan 1.1, so a 1.1 device has them without being asked. Some
+// drivers still list them and some don't; requiring them by name would lock out GPUs
+// that can run everything else. Enabled when listed, ignored otherwise.
+constexpr const char *kPromotedDeviceExt[] = {
+    VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+    VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+    VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME,
+    VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
+    VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+    VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,
+    VK_KHR_MAINTENANCE1_EXTENSION_NAME,
 };
 
 // Optional. Framegen uses null descriptors when robustness2 exists; when it is
@@ -80,7 +88,10 @@ VkInstance make_instance(bool &hasSurfaceExts) {
         .applicationVersion = VK_MAKE_VERSION(0, 1, 0),
         .pEngineName = "lsfg-vk",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        .apiVersion = VK_API_VERSION_1_2,  // need timelineSemaphore, vulkanMemoryModel
+        // Vulkan 1.1 is the baseline so this works on every GPU/driver with Vulkan 1.1+.
+        // Nothing here needs anything newer: barriers use vkCmdPipelineBarrier, no
+        // timeline semaphores, no synchronization2.
+        .apiVersion = VK_API_VERSION_1_1,
     };
 
     uint32_t extCount = 0;
@@ -256,6 +267,9 @@ int create_session(VulkanSession &out) {
 
     std::vector<const char *> enabledExts;
     for (const char *req : kRequiredDeviceExt) enabledExts.push_back(req);
+    for (const char *promoted : kPromotedDeviceExt) {
+        if (has_extension(avail, promoted)) enabledExts.push_back(promoted);
+    }
     bool hasSwapchainDevExt = false;
     for (const char *opt : kOptionalDeviceExt) {
         if (has_extension(avail, opt)) {
@@ -281,35 +295,8 @@ int create_session(VulkanSession &out) {
              (int)hasSurfaceExts, (int)hasSwapchainDevExt);
     }
 
-    // Determine which features are in core vs. need explicit extensions.
-    // Use extension-specific feature structs (their sType values are aliased to
-    // the promoted core structs on 1.2/1.3) so this works on all API versions.
-    const bool api12 = props.apiVersion >= VK_API_VERSION_1_2;
-    const bool api13 = props.apiVersion >= VK_API_VERSION_1_3;
-
-    // Timeline semaphores: core in 1.2, extension on 1.1
-    if (!api12) {
-        if (has_extension(avail, "VK_KHR_timeline_semaphore")) {
-            enabledExts.push_back("VK_KHR_timeline_semaphore");
-        } else {
-            LOGW("VK_KHR_timeline_semaphore absent — framegen will be disabled");
-        }
-    }
-
-    // synchronization2 (vkCmdPipelineBarrier2): core in 1.3, extension on 1.1/1.2.
-    // If absent, framegen's compat_pipeline_barrier2 shim handles it transparently.
-    const bool hasSync2Ext = has_extension(avail, "VK_KHR_synchronization2");
-    if (!api13) {
-        if (hasSync2Ext) {
-            enabledExts.push_back("VK_KHR_synchronization2");
-        } else {
-            LOGW("VK_KHR_synchronization2 absent — framegen will use barrier compat shim");
-        }
-    }
-
-    // vulkanMemoryModel: core in 1.2 but optional even there; needs extension on 1.1
-    if (!api12 && has_extension(avail, "VK_KHR_vulkan_memory_model"))
-        enabledExts.push_back("VK_KHR_vulkan_memory_model");
+    // Nothing beyond Vulkan 1.1 core is required, so no timeline semaphores,
+    // synchronization2 or memory-model features are enabled here.
 
     if (!out.hasRobustness2) {
         // Mali (most revisions), older Adreno, and PowerVR don't expose
@@ -358,42 +345,26 @@ int create_session(VulkanSession &out) {
              out.hasExportableSyncFdSemaphore ? "supported" : "no");
     }
 
-    // Query optional feature support before requesting them in vkCreateDevice.
-    VkPhysicalDeviceVulkanMemoryModelFeaturesKHR memModelQuery{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES_KHR,
+    // Query feature support before requesting anything in vkCreateDevice: a 1.1 device
+    // may expose the sampler-YCbCr / robustness2 extensions without every feature bit.
+    VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcrQuery{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES,
     };
     VkPhysicalDeviceFeatures2 features2Query{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &memModelQuery,
+        .pNext = &ycbcrQuery,
     };
     vkGetPhysicalDeviceFeatures2(out.physicalDevice, &features2Query);
-    const bool hasMemModel = memModelQuery.vulkanMemoryModel;
 
-    // Feature chain using extension-specific structs (compatible with all API versions).
+    // Feature chain (1.1 core / extension structs only).
     VkPhysicalDeviceRobustness2FeaturesEXT robustness2{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
         .nullDescriptor = VK_TRUE,
     };
-    VkPhysicalDeviceVulkanMemoryModelFeaturesKHR memModel{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES_KHR,
-        .pNext = out.hasRobustness2 ? &robustness2 : nullptr,
-        .vulkanMemoryModel = hasMemModel ? VK_TRUE : VK_FALSE,
-    };
-    const bool enableSync2 = api13 || hasSync2Ext;
-    VkPhysicalDeviceSynchronization2FeaturesKHR sync2{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
-        .pNext = &memModel,
-        .synchronization2 = VK_TRUE,
-    };
-    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineSem{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR,
-        .pNext = enableSync2 ? static_cast<void*>(&sync2) : static_cast<void*>(&memModel),
-        .timelineSemaphore = VK_TRUE,
-    };
     VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcr{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES,
-        .pNext = &timelineSem,
-        .samplerYcbcrConversion = VK_TRUE,
+        .pNext = out.hasRobustness2 ? static_cast<void *>(&robustness2) : nullptr,
+        .samplerYcbcrConversion = ycbcrQuery.samplerYcbcrConversion,
     };
 
     const float prio = 1.0f;

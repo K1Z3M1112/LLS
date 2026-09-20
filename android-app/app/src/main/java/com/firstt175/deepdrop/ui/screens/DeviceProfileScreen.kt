@@ -42,7 +42,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.firstt175.deepdrop.session.NativeBridge
-import com.firstt175.deepdrop.session.capture.ShizukuDisplayPermission
+import com.firstt175.deepdrop.session.diagnostics.ShizukuDisplayPermission
 import com.firstt175.deepdrop.ui.components.LsfgCard
 import com.firstt175.deepdrop.ui.components.LsfgTopBar
 import com.firstt175.deepdrop.ui.components.SectionHeader

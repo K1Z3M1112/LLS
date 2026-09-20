@@ -56,7 +56,6 @@ android {
 
     buildFeatures {
         compose = true
-        aidl = true
         buildConfig = true
     }
 
@@ -153,10 +152,15 @@ dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("com.github.topjohnwu.libsu:core:5.3.0")
-    implementation("com.github.topjohnwu.libsu:service:5.3.0")
     // GIF decoding/playback for the animated YouTube-channel avatar on the Credits screen.
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("io.coil-kt:coil-gif:2.6.0")
+    // Clip preview + trim/export for the Recording Gallery's video editor.
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
+    implementation("androidx.media3:media3-transformer:1.4.1")
+    implementation("androidx.media3:media3-effect:1.4.1")
+    implementation("androidx.media3:media3-common:1.4.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

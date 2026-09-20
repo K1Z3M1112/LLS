@@ -58,13 +58,15 @@ Gamma::Gamma(Vulkan& vk, std::array<std::array<Core::Image, 2>, 3> inImgs1,
         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_COMPARE_OP_ALWAYS, false);
 
     // create internal images/outputs
+    // one scope per stage: scratch images of different stages may share memory
+    this->scope = vk.memory.beginScope();
     const VkExtent2D extent = this->inImgs1.at(0).at(0).getExtent();
     for (size_t i = 0; i < 3; i++)
-        this->tempImgs1.at(i) = Core::Image(vk.device, extent);
+        this->tempImgs1.at(i) = vk.memory.scratch(vk.device, extent);
     for (size_t i = 0; i < 2; i++)
-        this->tempImgs2.at(i) = Core::Image(vk.device, extent);
+        this->tempImgs2.at(i) = vk.memory.scratch(vk.device, extent);
 
-    this->outImg = Core::Image(vk.device,
+    this->outImg = vk.memory.persistent(vk.device,
         { extent.width, extent.height },
         VK_FORMAT_R16G16B16A16_SFLOAT);
 
@@ -125,6 +127,7 @@ Gamma::Gamma(Vulkan& vk, std::array<std::array<Core::Image, 2>, 3> inImgs1,
 }
 
 void Gamma::Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount, uint64_t pass_idx) {
+    if (this->scope) this->scope->begin(buf);
     auto& pass = this->passes.at(pass_idx);
 
     // first shader
