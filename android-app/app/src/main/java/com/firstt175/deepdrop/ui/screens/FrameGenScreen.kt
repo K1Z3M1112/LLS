@@ -466,7 +466,6 @@ fun FrameGenSettingsSection(nav: NavHostController) {
     }
 }
 
-
 @Composable
 private fun FrameGenTailNote() {
     Text(

@@ -7,6 +7,7 @@
 #include <android/log.h>
 #include <array>
 #include <algorithm>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -128,6 +129,13 @@ bool compileShader(std::vector<uint32_t> &spirv) {
     return !spirv.empty();
 }
 
+// Max distinct destination VkImage handles (swapchain images across the
+// session's swapchain rebuilds) cached at once. record() below evicts the
+// least-recently-used entry once this is reached, so a long session that
+// cycles through more handles than this degrades gracefully instead of the
+// enhancement pass permanently falling back to a plain copy.
+constexpr uint32_t kMaxDestinationBindings = 32;
+
 } // namespace
 
 bool GpuImageEnhancement::initialize(VulkanSession &vk) {
@@ -213,11 +221,14 @@ bool GpuImageEnhancement::initialize(VulkanSession &vk) {
 
     const VkDescriptorPoolSize poolSize{
         .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        .descriptorCount = 32,
+        .descriptorCount = kMaxDestinationBindings * 2,
     };
     const VkDescriptorPoolCreateInfo dpi{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = 16,
+        // Lets record() free a single evicted DestinationBinding's set (LRU
+        // eviction below) instead of only being able to reset the whole pool.
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = kMaxDestinationBindings,
         .poolSizeCount = 1,
         .pPoolSizes = &poolSize,
     };
@@ -268,16 +279,34 @@ bool GpuImageEnhancement::record(VulkanSession &vk, VkCommandBuffer cb,
     }
 
     DestinationBinding *destinationBinding = nullptr;
-    for (auto &entry : destinationBindings_) {
-        if (entry.image == destination) {
-            destinationBinding = &entry;
+    for (size_t i = 0; i < destinationBindings_.size(); ++i) {
+        if (destinationBindings_[i].image == destination) {
+            // Move the hit to the back so the front stays the
+            // least-recently-used entry for the eviction below.
+            if (i + 1 != destinationBindings_.size()) {
+                const auto off = static_cast<std::ptrdiff_t>(i);
+                std::rotate(destinationBindings_.begin() + off,
+                            destinationBindings_.begin() + off + 1,
+                            destinationBindings_.end());
+            }
+            destinationBinding = &destinationBindings_.back();
             break;
         }
     }
     if (destinationBinding == nullptr) {
-        if (destinationBindings_.size() >= 16) {
-            LOGW("GPU enhancement: too many destination images");
-            return false;
+        if (destinationBindings_.size() >= kMaxDestinationBindings) {
+            // A long session can cycle through more distinct swapchain image
+            // handles than the cap (repeated swapchain rebuilds: rotation,
+            // HDR toggles, live settings changes, ...). Evict the
+            // least-recently-used entry instead of refusing every new handle
+            // from here on, which previously made the enhancement pass fall
+            // back to a plain copy for the rest of the session.
+            DestinationBinding &lru = destinationBindings_.front();
+            if (lru.view != VK_NULL_HANDLE)
+                vk.fn.vkDestroyImageView(vk.device, lru.view, nullptr);
+            if (lru.set != VK_NULL_HANDLE)
+                vk.fn.vkFreeDescriptorSets(vk.device, descriptorPool_, 1, &lru.set);
+            destinationBindings_.erase(destinationBindings_.begin());
         }
 
         VkImageViewCreateInfo vci{
@@ -371,6 +400,13 @@ void GpuImageEnhancement::clearDestinationBindings(VulkanSession &vk) {
     for (const auto &entry : destinationBindings_) {
         if (entry.view != VK_NULL_HANDLE && vk.fn.vkDestroyImageView)
             vk.fn.vkDestroyImageView(vk.device, entry.view, nullptr);
+    }
+    // The destination descriptor sets were allocated from this pool and are never
+    // freed individually, so without a reset every swapchain/stage rebuild (rotation,
+    // present-mode change, recording start/stop) leaked its sets until the pool ran dry
+    // and enhancement silently stopped working. The device is idle here.
+    if (descriptorPool_ != VK_NULL_HANDLE && vk.fn.vkResetDescriptorPool != nullptr) {
+        vk.fn.vkResetDescriptorPool(vk.device, descriptorPool_, 0);
     }
     destinationBindings_.clear();
 }

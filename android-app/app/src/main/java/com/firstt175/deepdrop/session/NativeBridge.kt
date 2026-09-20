@@ -116,7 +116,6 @@ object NativeBridge {
      */
     external fun getGpuVramMb(): Long
 
-
     /**
      * Reports whether the FP16 frame-generation shader path is usable on this
      * device. Two prerequisites must both hold:

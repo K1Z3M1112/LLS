@@ -15,6 +15,7 @@
 
 using namespace LSFG::Core;
 
+// Extensions the device MUST have.
 const std::vector<const char*> requiredExtensions = {
 #ifndef __ANDROID__
     "VK_KHR_external_memory_fd",
@@ -23,15 +24,24 @@ const std::vector<const char*> requiredExtensions = {
     // Android image sharing uses AHardwareBuffer, but frame completion is
     // synchronized across the host and framegen Vulkan devices with
     // exportable/importable opaque-FD binary semaphores.
-    "VK_KHR_external_semaphore",
     "VK_KHR_external_semaphore_fd",
     "VK_ANDROID_external_memory_android_hardware_buffer",
-    "VK_KHR_external_memory",                  // base ext, dependency
-    "VK_KHR_sampler_ycbcr_conversion",         // dependency of AHB ext
-    "VK_KHR_dedicated_allocation",             // required for dedicated AHB import
-    "VK_KHR_get_memory_requirements2",         // dependency
-    "VK_KHR_bind_memory2",                     // dependency
-    "VK_KHR_maintenance1",                     // dependency
+#endif
+};
+
+// Extensions that were promoted to core in Vulkan 1.1. The instance targets 1.1, so
+// they are core here and NOT required by name: some 1.1 drivers stop listing promoted
+// extensions, and failing on those would lock out GPUs that can run everything else.
+// Enable them when listed (older drivers), skip them otherwise.
+const std::vector<const char*> promotedExtensions = {
+#ifdef __ANDROID__
+    "VK_KHR_external_semaphore",
+    "VK_KHR_external_memory",
+    "VK_KHR_sampler_ycbcr_conversion",
+    "VK_KHR_dedicated_allocation",
+    "VK_KHR_get_memory_requirements2",
+    "VK_KHR_bind_memory2",
+    "VK_KHR_maintenance1",
 #endif
 };
 
@@ -114,8 +124,25 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
         enabledExtensions.push_back(extension);
     }
 
-    const bool hasRobustness2 =
-        hasExtension(availableExtensions, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+    for (const char* extension : promotedExtensions) {
+        if (hasExtension(availableExtensions, extension))
+            enabledExtensions.push_back(extension);
+    }
+
+    // robustness2 is optional (the fallback descriptor image covers its absence). The
+    // extension being listed doesn't guarantee nullDescriptor, so probe the feature too.
+    bool hasRobustness2 = false;
+    if (hasExtension(availableExtensions, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)) {
+        VkPhysicalDeviceRobustness2FeaturesEXT robustProbe{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+        };
+        VkPhysicalDeviceFeatures2 robustFeats{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &robustProbe,
+        };
+        vkGetPhysicalDeviceFeatures2(*physicalDevice, &robustFeats);
+        hasRobustness2 = robustProbe.nullDescriptor == VK_TRUE;
+    }
     if (hasRobustness2) {
         enabledExtensions.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
     }
@@ -124,41 +151,45 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
     // load precompiled SPIR-V FP16 shader variants from Lossless.dll (resource
     // IDs 304..351) which carry `OpCapability Float16`. Vulkan rejects those at
     // vkCreateShaderModule time unless the device was created with the
-    // shaderFloat16 feature explicitly enabled. We probe and unconditionally
-    // enable it when supported — there's no downside on FP32-only sessions and
-    // it lets the FP16 path "just work" when the user toggles it on.
-    VkPhysicalDeviceShaderFloat16Int8Features fp16Probe{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
-    };
-    VkPhysicalDeviceFeatures2 featsProbe{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &fp16Probe,
-    };
-    vkGetPhysicalDeviceFeatures2(*physicalDevice, &featsProbe);
-    const bool hasFloat16 = fp16Probe.shaderFloat16 == VK_TRUE;
+    // shaderFloat16 feature explicitly enabled. On Vulkan 1.1 that feature lives in
+    // VK_KHR_shader_float16_int8, so it is only used when that extension is listed and
+    // reports the feature as supported; otherwise FP32 shaders are used.
+    bool hasFloat16 = false;
+    if (hasExtension(availableExtensions, "VK_KHR_shader_float16_int8")) {
+        VkPhysicalDeviceShaderFloat16Int8FeaturesKHR fp16Probe{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR,
+        };
+        VkPhysicalDeviceFeatures2 featsProbe{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &fp16Probe,
+        };
+        vkGetPhysicalDeviceFeatures2(*physicalDevice, &featsProbe);
+        hasFloat16 = fp16Probe.shaderFloat16 == VK_TRUE;
+    }
+    if (hasFloat16) enabledExtensions.push_back("VK_KHR_shader_float16_int8");
 
-    // create logical device
+    // create logical device — feature chain built from extension structs only, so it is
+    // valid on a plain Vulkan 1.1 device (no Vulkan12/13 feature structs, no
+    // synchronization2, no timeline semaphores, no vulkan memory model: the shaders
+    // don't use them).
     const float queuePriority{1.0F}; // highest priority
     VkPhysicalDeviceRobustness2FeaturesEXT robustness2{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
         .nullDescriptor = VK_TRUE,
     };
-    VkPhysicalDeviceVulkan13Features features13{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-        .pNext = hasRobustness2 ? &robustness2 : nullptr,
-        .synchronization2 = VK_TRUE
+    VkPhysicalDeviceShaderFloat16Int8FeaturesKHR fp16Enable{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR,
+        .shaderFloat16 = VK_TRUE,
     };
-    // shaderFloat16 is exposed in core Vulkan 1.2 — same struct we already
-    // chain. Setting it conditionally avoids regressing devices that don't
-    // advertise the feature (the validation layers reject create_device when
-    // requested features are unsupported).
-    VkPhysicalDeviceVulkan12Features features12{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-        .pNext = &features13,
-        .shaderFloat16 = hasFloat16 ? VK_TRUE : VK_FALSE,
-        .timelineSemaphore = VK_TRUE,
-        .vulkanMemoryModel = VK_TRUE
-    };
+    void* featureChain = nullptr;
+    if (hasRobustness2) {
+        robustness2.pNext = featureChain;
+        featureChain = &robustness2;
+    }
+    if (hasFloat16) {
+        fp16Enable.pNext = featureChain;
+        featureChain = &fp16Enable;
+    }
     const VkDeviceQueueCreateInfo computeQueueDesc{
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
         .queueFamilyIndex = *computeFamilyIdx,
@@ -167,7 +198,7 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
     };
     const VkDeviceCreateInfo deviceCreateInfo{
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = &features12,
+        .pNext = featureChain,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &computeQueueDesc,
         .enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size()),

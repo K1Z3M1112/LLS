@@ -14,17 +14,17 @@ import android.view.accessibility.AccessibilityEvent
  * Required declaration so the user can enable the "LSFG Touch Passthrough" service
  * from Settings → Accessibility. The service has two independent jobs:
  *
- *  Hosts the overlay window as TYPE_ACCESSIBILITY_OVERLAY when the user enables
- *     "trusted overlay" mode (see [OverlayManager.show]), which is the primary fix
+ *  Hosts the overlay window as TYPE_ACCESSIBILITY_OVERLAY ("trusted overlay" mode,
+ *     always on — see [OverlayManager.show]), which is the primary fix
  *     for touch pass-through on strict AOSP builds.
  *
  * Gesture forwarding (this file's [forwardTap] / [forwardSwipe]) is a *secondary*,
- * opt-in fallback for the small set of devices where even the trusted-overlay path
+ * fallback for the small set of devices where even the trusted-overlay path
  * still drops or mis-routes a touch — instead of relying on the overlay window's
  * touchable-region being honoured, the accessibility service synthesizes the same
  * gesture directly at the coordinates the game should have received it at. It is
- * off by default (see [com.firstt175.deepdrop.prefs.LsfgConfig.gestureForwardingEnabled])
- * because [AccessibilityService.dispatchGesture] targets whatever window currently
+ * always enabled (there is no user setting for it).
+ * Note that [AccessibilityService.dispatchGesture] targets whatever window currently
  * has focus, which is indistinguishable from "the game" only when the overlay
  * itself is confirmed non-interactive — enabling this on a device where normal
  * pass-through already works would inject a duplicate touch on top of the one the
