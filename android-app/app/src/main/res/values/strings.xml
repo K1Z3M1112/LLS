@@ -58,7 +58,6 @@
     <string name="param_framegen_fp16">FP16 frame-gen shaders</string>
     <string name="param_framegen_fp16_desc">Use the half-precision shader variants pre-compiled inside Lossless.dll instead of the full-precision FP32 set. Reduces GPU load and memory bandwidth. Quality is virtually identical; falls back to FP32 automatically if anything goes wrong.</string>
 
-
     <string name="language_menu_item">Language</string>
     <string name="language_system">System default</string>
     <string name="language_english">English</string>
@@ -73,8 +72,6 @@
     <string name="credits_build_unofficial">Unofficial build — not signed by the original developer. Re-download from the official links above if you\'re unsure where this copy came from.</string>
 
     <string name="perm_capture_denied">Screen capture was denied. LSFG-Android+ cannot run without it.</string>
-
-
 
     <string name="crash_dialog_dismiss">Dismiss</string>
 
@@ -145,7 +142,6 @@
     <string name="profile_display_resolution">Resolution</string>
     <string name="profile_display_refresh">Refresh rate</string>
     <string name="profile_display_density">Density</string>
-
 
     <string name="settings_title">Settings</string>
     <string name="settings_general">General</string>

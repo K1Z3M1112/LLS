@@ -817,8 +817,6 @@ class LsfgForegroundService : Service() {
                         aiBackend = ai.enabled,
                         aiModelDir = ai.modelDir,
                         aiEngine = ai.engine,
-                        poolMemory = cfg.poolFramegenMemory,
-                        aliasScratch = cfg.aliasFramegenScratch,
                     )
                 }.getOrElse { e ->
                     LsfgLog.w(TAG, "initContext threw", e)
@@ -1488,8 +1486,6 @@ class LsfgForegroundService : Service() {
                         aiBackend = ai.enabled,
                         aiModelDir = ai.modelDir,
                         aiEngine = ai.engine,
-                        poolMemory = cfg.poolFramegenMemory,
-                        aliasScratch = cfg.aliasFramegenScratch,
                     )
                 }.getOrElse { -1 }
                 applyImageEnhancementSettings()

@@ -79,12 +79,6 @@ object NativeBridge {
         // com.firstt175.deepdrop.prefs.AiEngine.prefValue ordering. Ignored when
         // aiBackend is false.
         aiEngine: Int,
-        // Frame-gen image memory switches (LSFG shader path only, ignored by the
-        // AI backend). poolMemory sub-allocates the intermediate images from one
-        // shared block; aliasScratch lets per-stage scratch images share memory.
-        // Both are read once per initContext, so a change needs a re-init.
-        poolMemory: Boolean,
-        aliasScratch: Boolean,
     ): Int
 
     /**
@@ -121,7 +115,6 @@ object NativeBridge {
      * this as an estimate. -1 if the probe failed.
      */
     external fun getGpuVramMb(): Long
-
 
     /**
      * Reports whether the FP16 frame-generation shader path is usable on this

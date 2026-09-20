@@ -9,7 +9,6 @@
 #include "pool/shaderpool.hpp"
 #include "common/exception.hpp"
 #include "common/utils.hpp"
-#include "lsfg_memory.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -54,8 +53,6 @@ void LSFG_3_1P::initialize(uint64_t deviceUUID,
     device->descriptorPool = Core::DescriptorPool(device->device);
 
     device->resources = Pool::ResourcePool(device->isHdr, device->flowScale);
-    // image memory pooling / aliasing switches (set by the host beforehand)
-    device->memory.configure(LSFG::getMemoryOptions());
     device->shaders = Pool::ShaderPool(loader);
 
     std::srand(static_cast<uint32_t>(std::time(nullptr)));

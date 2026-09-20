@@ -16,7 +16,6 @@ using namespace LSFG;
 using namespace LSFG::Core;
 
 namespace {
-    MemoryOptions globalOptions;
     MemoryStats globalStats;
 
     VkDeviceSize alignUp(VkDeviceSize value, VkDeviceSize alignment) {
@@ -28,14 +27,6 @@ namespace {
 }
 
 // ---- public switches ---------------------------------------------------------
-
-void LSFG::setMemoryOptions(bool pooled, bool aliasScratch) {
-    globalOptions = MemoryOptions{ .pooled = pooled, .aliasScratch = aliasScratch };
-}
-
-Core::MemoryOptions LSFG::getMemoryOptions() {
-    return globalOptions;
-}
 
 Core::MemoryStats LSFG::getMemoryStats() {
     return globalStats;

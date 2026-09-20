@@ -195,7 +195,6 @@ class SettingsDrawerOverlay(
     private var screenW = 0
     private var screenH = 0
 
-
     fun setBypassListener(l: BypassToggleListener) { bypassListener = l }
     fun setStopOverlayListener(l: StopOverlayListener) { stopListener = l }
     fun setRestartSessionListener(l: RestartSessionListener) { restartListener = l }
@@ -873,24 +872,6 @@ class SettingsDrawerOverlay(
                     markReinitDirty()
                 })
             }
-
-            // Image memory savers — read once per context init, hence markReinitDirty().
-            frameGenSection.addView(switchRow(
-                label = "Pool image memory",
-                initial = initial.poolFramegenMemory,
-            ) {
-                Log.i(TAG, "live: poolFramegenMemory=$it")
-                prefs.setPoolFramegenMemory(it)
-                markReinitDirty()
-            })
-            frameGenSection.addView(switchRow(
-                label = "Alias scratch memory",
-                initial = initial.aliasFramegenScratch,
-            ) {
-                Log.i(TAG, "live: aliasFramegenScratch=$it")
-                prefs.setAliasFramegenScratch(it)
-                markReinitDirty()
-            })
         }
 
         // ---- Frame generation -----------------------------------------------
@@ -1388,8 +1369,6 @@ class SettingsDrawerOverlay(
             setPadding(0, dp(4), 0, dp(8))
         })
 
-
-
         // ---- HUD (readout switch + separate frame graph switch) ---------------------
         val hudSection = collapsibleSection(overlayPage, "HUD & OVERLAY")
         hudSection.addView(switchRow(
@@ -1814,7 +1793,6 @@ class SettingsDrawerOverlay(
         // panel size are not.
         panelWidthPx = minOf(dp(430), (screenW * 0.92f).toInt())
 
-
         // Rebuild panel layout params (size + gravity) on the new orientation.
         panelContainer?.let { pv ->
             pv.layoutParams = panelLayoutParams()
@@ -1851,7 +1829,6 @@ class SettingsDrawerOverlay(
         handlePulseAnimator = null
         handleView?.setGlow(1f)
     }
-
 
     private fun stopHandlePulse() {
         handlePulseAnimator?.cancel()

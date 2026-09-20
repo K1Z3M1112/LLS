@@ -36,7 +36,6 @@ constexpr int kRenderLoopBufferAlloc = -43;
 // and must be torn down normally via shutdownRenderLoop() when the session ends.
 constexpr int kRenderLoopFramegenDisabled = 1;
 
-
 struct RenderLoopConfig {
     uint32_t width;
     uint32_t height;
@@ -69,17 +68,6 @@ struct RenderLoopConfig {
     // ordering — keep them in sync. Any other value falls back to RIFE.
     // Ignored when aiBackend is false.
     int aiEngine = 0;
-
-    // Frame-gen image memory switches (LSFG shader path only; the AI backend
-    // never allocates these images). Both are runtime toggles from the app's
-    // settings, passed straight to LSFG::setMemoryOptions() before framegen
-    // initialises — see framegen-native-lib/framegen/public/lsfg_memory.hpp.
-    //   poolMemory   – sub-allocate the long-lived intermediate images from one
-    //                  shared VkDeviceMemory block instead of one allocation each.
-    //   aliasScratch – let the per-stage scratch images of different shader
-    //                  stages share memory (only one stage runs at a time).
-    bool poolMemory = false;
-    bool aliasScratch = false;
 };
 
 // Initialise render loop: create Vulkan session, allocate ping-pong inputs +

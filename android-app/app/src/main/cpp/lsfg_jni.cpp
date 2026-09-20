@@ -82,8 +82,7 @@ Java_com_firstt175_deepdrop_session_NativeBridge_initContext(
         jboolean performance, jboolean hdr,
         jboolean framegenFp16,
         jboolean aiBackend, jstring aiModelDir,
-        jint aiEngine,
-        jboolean poolMemory, jboolean aliasScratch) {
+        jint aiEngine) {
     const std::string cache = jstring_to_std(env, cacheDir);
     if (cache.empty() || width <= 0 || height <= 0) {
         return lsfg_android::kErrDllUnreadable;
@@ -114,8 +113,6 @@ Java_com_firstt175_deepdrop_session_NativeBridge_initContext(
         .aiBackend = wantAi,
         .aiModelDir = jstring_to_std(env, aiModelDir),
         .aiEngine = static_cast<int>(aiEngine),
-        .poolMemory = poolMemory == JNI_TRUE,
-        .aliasScratch = aliasScratch == JNI_TRUE,
     };
     return lsfg_android::initRenderLoop(cache.c_str(), cfg);
 }
@@ -434,7 +431,6 @@ Java_com_firstt175_deepdrop_session_NativeBridge_setPresentMode(
         JNIEnv * /*env*/, jobject /*thiz*/, jint mode) {
     lsfg_android::setPresentMode(static_cast<int32_t>(mode));
 }
-
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_firstt175_deepdrop_session_NativeBridge_setGenerationDeadlineMs(

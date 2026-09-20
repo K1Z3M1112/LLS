@@ -22,18 +22,6 @@ data class LsfgConfig(
      */
     val framegenFp16: Boolean,
     /**
-     * Sub-allocate the frame-gen shader chain's long-lived intermediate images from
-     * one shared memory block instead of one allocation per image. Fewer
-     * allocations, less padding; LSFG shader backend only, applied on (re)start.
-     */
-    val poolFramegenMemory: Boolean,
-    /**
-     * Let the per-stage scratch images of the frame-gen chain share the same memory
-     * (only one stage uses its scratch at a time). Saves the most VRAM; LSFG shader
-     * backend only, applied on (re)start.
-     */
-    val aliasFramegenScratch: Boolean,
-    /**
      * Fraction of the display's native resolution to capture and render at,
      * from 1.0 (100%, native) down to 0.0 (0%, capture disabled — floor-clamped
      * to [MIN_RENDER_RESOLUTION_SCALE] everywhere it drives an actual buffer
@@ -150,7 +138,6 @@ enum class IfrnetModel(val prefValue: String, val assetDir: String, val label: S
     }
 }
 
-
 /** Filter used when blitting the framegen output to the swapchain if their
  *  resolutions differ. NEAREST=0, BILINEAR=1 (native side ordinal). */
 enum class UpscaleFilter(val prefValue: String) {
@@ -215,8 +202,6 @@ class LsfgPreferences(ctx: Context) {
         performanceMode = prefs.getBoolean(KEY_PERF, true),
         hdrMode = prefs.getBoolean(KEY_HDR, false),
         framegenFp16 = prefs.getBoolean(KEY_FRAMEGEN_FP16, true),
-        poolFramegenMemory = prefs.getBoolean(KEY_POOL_FRAMEGEN_MEMORY, true),
-        aliasFramegenScratch = prefs.getBoolean(KEY_ALIAS_FRAMEGEN_SCRATCH, true),
         renderResolutionScale = prefs.getFloat(KEY_RENDER_RESOLUTION_SCALE, 0.9f).coerceIn(0.0f, 1.0f),
         generationDeadlineMs = prefs.getInt(KEY_GENERATION_DEADLINE_MS, 0).coerceIn(0, 100),
         bypassGenDeadlineMs = prefs.getInt(KEY_BYPASS_GEN_DEADLINE_MS, 0).coerceIn(0, 100),
@@ -332,8 +317,6 @@ class LsfgPreferences(ctx: Context) {
     fun setPerformance(value: Boolean) = prefs.edit().putBoolean(KEY_PERF, value).apply()
     fun setHdr(value: Boolean) = prefs.edit().putBoolean(KEY_HDR, value).apply()
     fun setFramegenFp16(value: Boolean) = prefs.edit().putBoolean(KEY_FRAMEGEN_FP16, value).apply()
-    fun setPoolFramegenMemory(value: Boolean) = prefs.edit().putBoolean(KEY_POOL_FRAMEGEN_MEMORY, value).apply()
-    fun setAliasFramegenScratch(value: Boolean) = prefs.edit().putBoolean(KEY_ALIAS_FRAMEGEN_SCRATCH, value).apply()
     fun setRenderResolutionScale(value: Float) = prefs.edit()
         .putFloat(KEY_RENDER_RESOLUTION_SCALE, value.coerceIn(0.0f, 1.0f))
         .apply()
@@ -348,7 +331,6 @@ class LsfgPreferences(ctx: Context) {
     fun setOverlayMode(value: OverlayMode) = prefs.edit()
         .putString(KEY_OVERLAY_MODE, value.prefValue)
         .apply()
-
 
     fun isWaitForBusyGenerationEnabled(): Boolean =
         prefs.getBoolean(KEY_WAIT_FOR_BUSY_GENERATION, false)
@@ -390,7 +372,6 @@ class LsfgPreferences(ctx: Context) {
         .putString(KEY_AI_MODEL_GRAPHS, null)
         .apply()
 
-
     fun setMyModelsRootUri(uri: String?) = prefs.edit()
         .putString(KEY_MY_MODELS_ROOT_URI, uri)
         .apply()
@@ -410,9 +391,6 @@ class LsfgPreferences(ctx: Context) {
         .putString(KEY_AI_MODEL_PRECISION, precision)
         .putString(KEY_AI_MODEL_GRAPHS, graphs.joinToString("\n"))
         .apply()
-
-
-
 
     /** Switches the ncnn engine and clears its cached load status. */
 
@@ -463,8 +441,6 @@ class LsfgPreferences(ctx: Context) {
         private const val KEY_PERF = "performance"
         private const val KEY_HDR = "hdr"
         private const val KEY_FRAMEGEN_FP16 = "framegen_fp16"
-        private const val KEY_POOL_FRAMEGEN_MEMORY = "pool_framegen_memory"
-        private const val KEY_ALIAS_FRAMEGEN_SCRATCH = "alias_framegen_scratch"
         private const val KEY_GENERATION_DEADLINE_MS = "generation_deadline_ms"
         private const val KEY_BYPASS_GEN_DEADLINE_MS = "bypass_gen_deadline_ms"
         private const val KEY_BYPASS_GEN_RESUME_DELAY_MS = "bypass_gen_resume_delay_ms"

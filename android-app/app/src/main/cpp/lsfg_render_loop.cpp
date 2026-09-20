@@ -95,8 +95,6 @@ struct State {
     bool performanceMode = false;
     bool framegenInitOk = false;  // tracks whether LSFG_3_1::initialize succeeded
     bool framegenFp16 = false;    // load IDs 304..351 (FP16 SPIR-V) instead of 353..400 (FP32 SPIR-V)
-    bool poolMemory = false;      // framegen: sub-allocate internal images from a shared block
-    bool aliasScratch = false;    // framegen: scratch images of different stages share memory
     bool hdr = false;
     float flowScale = 1.0f;
     int32_t framegenCtxId = -1;
@@ -315,8 +313,6 @@ struct State {
     uint32_t lumaGateDarkCount = 0;
     int64_t  lumaGateStartNs   = 0; // steady_clock ns at first suppressed dark frame
 
-
-
     // Ordered capture queue. losslessQueue=true retains every capture until
     // its turn is processed; losslessQueue=false uses the configurable bounded
     // queue policy. The worker owns the frame it has popped.
@@ -455,8 +451,6 @@ struct State {
     // setAutoDisableOnDeviceLostEnabled() for anyone who'd rather keep
     // retrying framegen after a device-lost event.
     std::atomic<bool> autoDisableOnDeviceLostEnabled{true};
-
-
 
 };
 
@@ -1595,9 +1589,6 @@ bool initFramegen(const char *cacheDir) {
     };
 
     try {
-        // Must be set before initialize(): the switches are copied into the
-        // framegen device state there and read while each context is built.
-        LSFG::setMemoryOptions(g.poolMemory, g.aliasScratch);
         if (g.performanceMode) {
             LSFG_3_1P::initialize(g.vk.deviceUuid, g.hdr, g.flowScale,
                                   static_cast<uint64_t>(g.multiplier), loader);
@@ -1649,10 +1640,8 @@ bool createFramegenContext() {
     }
     {
         const auto mem = LSFG::getMemoryStats();
-        const auto opt = LSFG::getMemoryOptions();
-        LOGI("framegen image memory: pool=%d alias=%d | pooled=%.1f MiB scratch=%.1f MiB "
+        LOGI("framegen image memory: pooled=%.1f MiB scratch=%.1f MiB "
              "(would be %.1f MiB unaliased) allocations=%u",
-             opt.pooled ? 1 : 0, opt.aliasScratch ? 1 : 0,
              static_cast<double>(mem.persistentBytes) / (1024.0 * 1024.0),
              static_cast<double>(mem.scratchBytes) / (1024.0 * 1024.0),
              static_cast<double>(mem.scratchUnaliasedBytes) / (1024.0 * 1024.0),
@@ -1703,7 +1692,6 @@ void drainFramegenCompletionSemaphore(VkSemaphore semaphore) {
     }
     g.framegenCompletionTickets.push_back({semaphore, fence, /*ownsFence=*/true});
 }
-
 
 // CPU image post-process used by the live settings. The operation is deliberately
 // simple and allocation-free after the first frame: one reusable RGBA8 staging
@@ -2088,7 +2076,6 @@ void workerThread() {
                  "staying at default priority");
         }
     }
-
 
     // ---- Frame-time profiling ------------------------------------------------
     //
@@ -2750,7 +2737,6 @@ void workerThread() {
             drainFinalFrameQueue();
         }
 
-
     }
 }
 
@@ -2768,8 +2754,6 @@ int initRenderLoop(const char *cacheDir, const RenderLoopConfig &cfg) {
     g.multiplier = totalMult - 1;  // generationCount = N extra frames per pair
     g.performanceMode = cfg.performance;
     g.framegenFp16 = cfg.framegenFp16;
-    g.poolMemory = cfg.poolMemory;
-    g.aliasScratch = cfg.aliasScratch;
     g.hdr = cfg.hdr;
     // flowScale on the prefs slider is "0.25..1.0" in user-friendly form, but
     // framegen wants the reciprocal (Linux passes 1.0f / conf.flowScale at
@@ -2915,8 +2899,6 @@ int initRenderLoop(const char *cacheDir, const RenderLoopConfig &cfg) {
 
     g.initialized = true;
 
-
-
     g.stopRequested = false;
     g.worker = std::thread(workerThread);
     g.genStopRequested = false;
@@ -3014,7 +2996,6 @@ void setOutputSurface(ANativeWindow *win, uint32_t w, uint32_t h) {
         LOGW("Output surface detached");
     }
 }
-
 
 void setRecordingSurface(ANativeWindow *win, uint32_t w, uint32_t h) {
     std::lock_guard<std::mutex> lock(g.presentMu);
@@ -3191,7 +3172,6 @@ void shutdownRenderLoop() {
         g.aiOutputStaging.clear();
         g.aiOutputPtrs.clear();
         for (int i = 0; i < 2; ++i) destroyAhbImage(g.vk, g.inSlot[i]);
-
 
         // Destroy swapchain (and its surface) before the underlying ANativeWindow
         // is touched — surface destruction drops its internal window ref.
@@ -3460,7 +3440,6 @@ bool resumeFramegenAfterAutoDisable() {
     }
     return wasDisabled;
 }
-
 
 } // namespace lsfg_android
 
