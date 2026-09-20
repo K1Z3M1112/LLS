@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -717,18 +718,28 @@ fun GameLauncherScreen(nav: NavHostController) {
                     icon = Icons.Filled.DisplaySettings,
                     label = stringResource(R.string.home_settings),
                     onClick = { nav.navigate(Routes.SETTINGS) },
+                    modifier = Modifier.weight(1f),
                 )
                 LauncherBottomItem(
                     selected = filter == 1,
                     icon = Icons.Filled.Gamepad,
                     label = stringResource(R.string.home_my_games),
                     onClick = { filter = 1 },
+                    modifier = Modifier.weight(1f),
+                )
+                LauncherBottomItem(
+                    selected = false,
+                    icon = Icons.Filled.PhotoLibrary,
+                    label = stringResource(R.string.home_gallery),
+                    onClick = { nav.navigate(Routes.RECORDINGS) },
+                    modifier = Modifier.weight(1f),
                 )
                 LauncherBottomItem(
                     selected = false,
                     icon = Icons.Filled.AccountCircle,
                     label = stringResource(R.string.home_profile),
                     onClick = { nav.navigate(Routes.PROFILE) },
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -784,10 +795,10 @@ private fun LauncherBottomItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
-            .width(110.dp)
+        modifier = modifier
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 6.dp),

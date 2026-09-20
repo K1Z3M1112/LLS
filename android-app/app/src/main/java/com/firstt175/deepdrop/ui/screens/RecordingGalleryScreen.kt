@@ -198,7 +198,14 @@ fun RecordingGalleryScreen(nav: NavHostController) {
                     AndroidVideoPlayer(item.uri)
                 }
             },
-            confirmButton = { TextButton(onClick = { selected = null }) { Text("Close") } },
+            confirmButton = {
+                TextButton(onClick = {
+                    val id = ContentUris.parseId(item.uri)
+                    selected = null
+                    nav.navigate("${com.firstt175.deepdrop.ui.Routes.VIDEO_EDIT}/$id")
+                }) { Text("Edit") }
+            },
+            dismissButton = { TextButton(onClick = { selected = null }) { Text("Close") } },
         )
     }
 }

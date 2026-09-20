@@ -183,6 +183,7 @@
     <string name="home_search">ค้นหาเกมหรือแอป...</string>
     <string name="home_add_game">เพิ่มเกม</string>
     <string name="home_profile">โปรไฟล์</string>
+    <string name="home_gallery">แกลเลอรี</string>
     <string name="home_no_games">ไม่พบแอปที่สามารถเพิ่มเป็นเกมได้</string>
     <string name="home_add">เพิ่ม</string>
     <string name="home_cancel">ยกเลิก</string>

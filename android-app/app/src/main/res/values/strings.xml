@@ -182,6 +182,7 @@
     <string name="home_search">Search games or apps...</string>
     <string name="home_add_game">Add game</string>
     <string name="home_profile">Profile</string>
+    <string name="home_gallery">Gallery</string>
     <string name="home_no_games">No apps available to add as games</string>
     <string name="home_add">Add</string>
     <string name="home_cancel">Cancel</string>
