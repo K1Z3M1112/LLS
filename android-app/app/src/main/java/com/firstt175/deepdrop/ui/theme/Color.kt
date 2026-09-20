@@ -5,8 +5,8 @@ import androidx.compose.ui.graphics.Color
 // Strict orange + black theme — every color below is a shade of orange or
 // a neutral black/gray, no other hues. Refreshed for a richer, more
 // "premium ember" look: primary is a touch deeper/more saturated, and a
-// couple of glow/gradient accents were added for the redesigned cards,
-// buttons and the launch/loading screen.
+// couple of glow/gradient accents were added for the redesigned cards and
+// buttons.
 val LsfgPrimary = Color(0xFFFF9F1C)
 val LsfgOnPrimary = Color(0xFF1A0F00)
 val LsfgPrimaryContainer = Color(0xFF4A2C00)
@@ -55,13 +55,9 @@ val LsfgStatusBad = Color(0xFFD32F2F)
 
 // New in the redesign: a soft glow tone for highlighted rings/shadows behind
 // icons and buttons, plus a warmer gradient partner for two-tone fills
-// (primary buttons, the loading-screen core). Both stay in the orange family.
+// (primary buttons). Both stay in the orange family.
 val LsfgGlow = Color(0xFFFFC26B)
 val LsfgGradientEnd = Color(0xFFE85D04)
-
-/** Deep-space backdrop used by the warp-style loading screen. */
-val LsfgWarpVoid = Color(0xFF060302)
-
 
 /** Light theme palette. */
 val LsfgLightPrimary = Color(0xFFE47700)
