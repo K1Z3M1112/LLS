@@ -10,6 +10,7 @@
 #include "common/utils.hpp"
 
 #include <array>
+#include <memory>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -65,6 +66,7 @@ namespace LSFG_3_1::Shaders {
         std::array<std::array<Core::Image, 4>, 3> inImgs1;
         Core::Image inImg2;
         std::optional<Core::Image> optImg;
+        std::shared_ptr<Core::ScratchScope> scope;
         std::array<Core::Image, 4> tempImgs1;
         std::array<Core::Image, 4> tempImgs2;
         Core::Image outImg;

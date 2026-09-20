@@ -21,7 +21,18 @@ data class LsfgConfig(
      * hardware never sees the toggle.
      */
     val framegenFp16: Boolean,
-    val captureSource: CaptureSource,
+    /**
+     * Sub-allocate the frame-gen shader chain's long-lived intermediate images from
+     * one shared memory block instead of one allocation per image. Fewer
+     * allocations, less padding; LSFG shader backend only, applied on (re)start.
+     */
+    val poolFramegenMemory: Boolean,
+    /**
+     * Let the per-stage scratch images of the frame-gen chain share the same memory
+     * (only one stage uses its scratch at a time). Saves the most VRAM; LSFG shader
+     * backend only, applied on (re)start.
+     */
+    val aliasFramegenScratch: Boolean,
     /**
      * Fraction of the display's native resolution to capture and render at,
      * from 1.0 (100%, native) down to 0.0 (0%, capture disabled — floor-clamped
@@ -39,19 +50,14 @@ data class LsfgConfig(
     /** Time to remain in automatic BypassGen before generation may resume. */
     val bypassGenResumeDelayMs: Int,
     val legalAccepted: Boolean,
-    val fpsCounterEnabled: Boolean,
+    /** Single on/off for the whole HUD: fps line, frame pacing graph, CPU/GPU/RAM line. */
+    val hudEnabled: Boolean,
+    /** Separate on/off for the HUD's frame pacing graph (independent of [hudEnabled]). */
     val frameGraphEnabled: Boolean,
-    /** Whether the HUD's CPU/GPU/RAM readout line shows CPU load %. */
-    val cpuStatEnabled: Boolean,
-    /** Whether the HUD's CPU/GPU/RAM readout line shows GPU busy %. */
-    val gpuStatEnabled: Boolean,
-    /** Whether the HUD's CPU/GPU/RAM readout line shows used/total RAM. */
-    val ramStatEnabled: Boolean,
     /** Whether HUD positioning is unlocked for touch dragging. Locked by default. */
     val hudPositionUnlocked: Boolean,
     val hudPositionX: Float,
     val hudPositionY: Float,
-    val drawerEdge: DrawerEdge,
     val overlayMode: OverlayMode,
     /** Vulkan presentation mode used consistently by every render-loop swapchain. */
     val presentMode: PresentMode,
@@ -62,16 +68,6 @@ data class LsfgConfig(
     /** Keep every captured real frame queued instead of bounding the queue at maxQueuedRealFrames. */
     val losslessQueue: Boolean,
     val autoEnabledApps: Set<String>,
-    val trustedOverlay: Boolean,
-    /**
-     * Opt-in fallback: when true and [trustedOverlay] is active, callers may use
-     * [com.firstt175.deepdrop.session.service.LsfgAccessibilityService.forwardTap] /
-     * `forwardSwipe` to synthesize touches on strict devices where even the
-     * trusted-overlay pass-through path drops input. Off by default — see the
-     * class doc on [com.firstt175.deepdrop.session.service.LsfgAccessibilityService] for why
-     * this must stay opt-in rather than always-on.
-     */
-    val gestureForwardingEnabled: Boolean,
     val framegenBackend: FramegenBackend,
     val aiModelUri: String?,
     val aiModelDisplayName: String?,
@@ -167,23 +163,11 @@ enum class UpscaleFilter(val prefValue: String) {
     }
 }
 
-enum class DrawerEdge(val prefValue: String) {
-    LEFT("left"),
-    RIGHT("right"),
-    TOP("top"),
-    BOTTOM("bottom");
-
-    companion object {
-        fun fromPref(value: String?): DrawerEdge =
-            values().firstOrNull { it.prefValue == value } ?: RIGHT
-    }
-}
-
 /**
  * In-game settings overlay entry affordance.
  *
  *  - [ICON_BUTTON] (default): a small draggable circular icon floats on top of the
- *    target app. Tapping it opens the same settings panel from the chosen edge.
+ *    target app. Tapping it opens the same settings panel from the right edge.
  *  - [DRAWER]: legacy edge-swipe handle. Reliable on most devices but a few OEM
  *    skins clip TYPE_APPLICATION_OVERLAY edges so the user can end up unable to
  *    drag the drawer back closed — see the warning shown in the UI.
@@ -195,17 +179,6 @@ enum class OverlayMode(val prefValue: String) {
     companion object {
         fun fromPref(value: String?): OverlayMode =
             values().firstOrNull { it.prefValue == value } ?: ICON_BUTTON
-    }
-}
-
-enum class CaptureSource(val prefValue: String) {
-    MEDIA_PROJECTION("media_projection"),
-    SHIZUKU("shizuku"),
-    ROOT("root");
-
-    companion object {
-        fun fromPref(value: String?): CaptureSource =
-            values().firstOrNull { it.prefValue == value } ?: MEDIA_PROJECTION
     }
 }
 
@@ -242,29 +215,33 @@ class LsfgPreferences(ctx: Context) {
         performanceMode = prefs.getBoolean(KEY_PERF, true),
         hdrMode = prefs.getBoolean(KEY_HDR, false),
         framegenFp16 = prefs.getBoolean(KEY_FRAMEGEN_FP16, true),
-        captureSource = CaptureSource.fromPref(prefs.getString(KEY_CAPTURE_SOURCE, null)),
+        poolFramegenMemory = prefs.getBoolean(KEY_POOL_FRAMEGEN_MEMORY, true),
+        aliasFramegenScratch = prefs.getBoolean(KEY_ALIAS_FRAMEGEN_SCRATCH, true),
         renderResolutionScale = prefs.getFloat(KEY_RENDER_RESOLUTION_SCALE, 0.9f).coerceIn(0.0f, 1.0f),
         generationDeadlineMs = prefs.getInt(KEY_GENERATION_DEADLINE_MS, 0).coerceIn(0, 100),
         bypassGenDeadlineMs = prefs.getInt(KEY_BYPASS_GEN_DEADLINE_MS, 0).coerceIn(0, 100),
         bypassGenResumeDelayMs = prefs.getInt(KEY_BYPASS_GEN_RESUME_DELAY_MS, 50).coerceIn(0, 2000),
         legalAccepted = prefs.getBoolean(KEY_LEGAL, false),
-        fpsCounterEnabled = prefs.getBoolean(KEY_FPS_COUNTER, false),
+        // The HUD used to be separate toggles; if the single HUD switch was never
+        // written, treat the HUD as on when any of the old readout toggles was on.
+        hudEnabled = if (prefs.contains(KEY_HUD)) {
+            prefs.getBoolean(KEY_HUD, false)
+        } else {
+            prefs.getBoolean(KEY_FPS_COUNTER, false) ||
+                prefs.getBoolean(KEY_CPU_STAT, false) ||
+                prefs.getBoolean(KEY_GPU_STAT, false) ||
+                prefs.getBoolean(KEY_RAM_STAT, false)
+        },
         frameGraphEnabled = prefs.getBoolean(KEY_FRAME_GRAPH, false),
-        cpuStatEnabled = prefs.getBoolean(KEY_CPU_STAT, false),
-        gpuStatEnabled = prefs.getBoolean(KEY_GPU_STAT, false),
-        ramStatEnabled = prefs.getBoolean(KEY_RAM_STAT, false),
         hudPositionUnlocked = prefs.getBoolean(KEY_HUD_POSITION_UNLOCKED, false),
         hudPositionX = prefs.getFloat(KEY_HUD_POSITION_X, 0.02f).coerceIn(0f, 1f),
         hudPositionY = prefs.getFloat(KEY_HUD_POSITION_Y, 0.02f).coerceIn(0f, 1f),
-        drawerEdge = DrawerEdge.fromPref(prefs.getString(KEY_DRAWER_EDGE, null)),
         overlayMode = OverlayMode.DRAWER,
         presentMode = PresentMode.fromPref(prefs.getString(KEY_PRESENT_MODE, null)),
         waitForBusyGeneration = prefs.getBoolean(KEY_WAIT_FOR_BUSY_GENERATION, false),
         allowGenerationWhenBusy = prefs.getBoolean(KEY_ALLOW_GENERATION_WHEN_BUSY, false),
         losslessQueue = prefs.getBoolean(KEY_LOSSLESS_QUEUE, false),
         autoEnabledApps = decodeAutoEnabledApps(prefs.getString(KEY_AUTO_ENABLED_APPS, null)),
-        trustedOverlay = prefs.getBoolean(KEY_TRUSTED_OVERLAY, false),
-        gestureForwardingEnabled = prefs.getBoolean(KEY_GESTURE_FORWARDING, false),
         framegenBackend = FramegenBackend.fromPref(prefs.getString(KEY_FRAMEGEN_BACKEND, null)),
         aiModelUri = prefs.getString(KEY_AI_MODEL_URI, null),
         aiModelDisplayName = prefs.getString(KEY_AI_MODEL_NAME, null),
@@ -355,24 +332,18 @@ class LsfgPreferences(ctx: Context) {
     fun setPerformance(value: Boolean) = prefs.edit().putBoolean(KEY_PERF, value).apply()
     fun setHdr(value: Boolean) = prefs.edit().putBoolean(KEY_HDR, value).apply()
     fun setFramegenFp16(value: Boolean) = prefs.edit().putBoolean(KEY_FRAMEGEN_FP16, value).apply()
-    fun setCaptureSource(value: CaptureSource) = prefs.edit()
-        .putString(KEY_CAPTURE_SOURCE, value.prefValue)
-        .apply()    fun setRenderResolutionScale(value: Float) = prefs.edit()
+    fun setPoolFramegenMemory(value: Boolean) = prefs.edit().putBoolean(KEY_POOL_FRAMEGEN_MEMORY, value).apply()
+    fun setAliasFramegenScratch(value: Boolean) = prefs.edit().putBoolean(KEY_ALIAS_FRAMEGEN_SCRATCH, value).apply()
+    fun setRenderResolutionScale(value: Float) = prefs.edit()
         .putFloat(KEY_RENDER_RESOLUTION_SCALE, value.coerceIn(0.0f, 1.0f))
         .apply()
     fun setLegalAccepted(value: Boolean) = prefs.edit().putBoolean(KEY_LEGAL, value).apply()
-    fun setFpsCounterEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_FPS_COUNTER, value).apply()
+    fun setHudEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_HUD, value).apply()
     fun setFrameGraphEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_FRAME_GRAPH, value).apply()
-    fun setCpuStatEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_CPU_STAT, value).apply()
-    fun setGpuStatEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_GPU_STAT, value).apply()
-    fun setRamStatEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_RAM_STAT, value).apply()
     fun setHudPositionUnlocked(value: Boolean) = prefs.edit().putBoolean(KEY_HUD_POSITION_UNLOCKED, value).apply()
     fun setHudPosition(x: Float, y: Float) = prefs.edit()
         .putFloat(KEY_HUD_POSITION_X, x.coerceIn(0f, 1f))
         .putFloat(KEY_HUD_POSITION_Y, y.coerceIn(0f, 1f))
-        .apply()
-    fun setDrawerEdge(value: DrawerEdge) = prefs.edit()
-        .putString(KEY_DRAWER_EDGE, value.prefValue)
         .apply()
     fun setOverlayMode(value: OverlayMode) = prefs.edit()
         .putString(KEY_OVERLAY_MODE, value.prefValue)
@@ -396,11 +367,6 @@ class LsfgPreferences(ctx: Context) {
     fun setLosslessQueue(value: Boolean) = prefs.edit()
         .putBoolean(KEY_LOSSLESS_QUEUE, value)
         .apply()
-
-    fun setTrustedOverlay(value: Boolean) = prefs.edit().putBoolean(KEY_TRUSTED_OVERLAY, value).apply()
-
-    fun setGestureForwardingEnabled(value: Boolean) =
-        prefs.edit().putBoolean(KEY_GESTURE_FORWARDING, value).apply()
 
     fun setFramegenBackend(value: FramegenBackend) = prefs.edit()
         .putString(KEY_FRAMEGEN_BACKEND, value.prefValue)
@@ -497,7 +463,8 @@ class LsfgPreferences(ctx: Context) {
         private const val KEY_PERF = "performance"
         private const val KEY_HDR = "hdr"
         private const val KEY_FRAMEGEN_FP16 = "framegen_fp16"
-        private const val KEY_CAPTURE_SOURCE = "capture_source"
+        private const val KEY_POOL_FRAMEGEN_MEMORY = "pool_framegen_memory"
+        private const val KEY_ALIAS_FRAMEGEN_SCRATCH = "alias_framegen_scratch"
         private const val KEY_GENERATION_DEADLINE_MS = "generation_deadline_ms"
         private const val KEY_BYPASS_GEN_DEADLINE_MS = "bypass_gen_deadline_ms"
         private const val KEY_BYPASS_GEN_RESUME_DELAY_MS = "bypass_gen_resume_delay_ms"
@@ -511,6 +478,8 @@ class LsfgPreferences(ctx: Context) {
          */
         const val MIN_RENDER_RESOLUTION_SCALE = 0.1f
         private const val KEY_LEGAL = "legal_accepted"
+        private const val KEY_HUD = "hud_enabled"
+        // Legacy per-part HUD keys (except KEY_FRAME_GRAPH, which is the live graph switch).
         private const val KEY_FPS_COUNTER = "fps_counter"
         private const val KEY_FRAME_GRAPH = "frame_graph"
         private const val KEY_CPU_STAT = "hud_cpu_stat"
@@ -519,15 +488,12 @@ class LsfgPreferences(ctx: Context) {
         private const val KEY_HUD_POSITION_UNLOCKED = "hud_position_unlocked"
         private const val KEY_HUD_POSITION_X = "hud_position_x"
         private const val KEY_HUD_POSITION_Y = "hud_position_y"
-        private const val KEY_DRAWER_EDGE = "drawer_edge"
         private const val KEY_OVERLAY_MODE = "overlay_mode"
         private const val KEY_PRESENT_MODE = "present_mode"
         private const val KEY_WAIT_FOR_BUSY_GENERATION = "wait_for_busy_generation"
         private const val KEY_ALLOW_GENERATION_WHEN_BUSY = "allow_generation_when_busy"
         private const val KEY_LOSSLESS_QUEUE = "lossless_queue"
         private const val KEY_AUTO_ENABLED_APPS = "auto_enabled_apps"
-        private const val KEY_TRUSTED_OVERLAY = "trusted_overlay"
-        private const val KEY_GESTURE_FORWARDING = "gesture_forwarding_enabled"
         private const val KEY_FRAMEGEN_BACKEND = "framegen_backend"
         private const val KEY_RIFE_MODEL = "rife_model"
         private const val KEY_IFRNET_MODEL = "ifrnet_model"

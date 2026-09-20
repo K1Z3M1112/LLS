@@ -12,18 +12,8 @@ import android.os.SystemClock
  *
  * This reads exclusively from NativeBridge's render-loop counters
  * (getUniqueCaptureCount / getPostedFrameCount / getGeneratedFrameCount).
- * Those counters live in the native render loop itself, not in any
- * particular capture source — MediaProjection, Shizuku and root capture
- * all funnel into the same pushFrame() queue, so there is exactly one set
- * of numbers to poll no matter which engine is feeding it.
- *
- * Previously CaptureEngine, RootCaptureEngine and ShizukuCaptureEngine each
- * carried an identical copy of this polling logic (FpsListener,
- * FrameGraphListener, a HandlerThread, EMA state...) despite none of it
- * touching anything engine-specific. Centralizing it here means the three
- * capture engines only have to do the one thing they exist for: receive a
- * frame, hand it to NativeBridge. Callers no longer need to branch on which
- * capture source is currently active just to start/stop/listen for metrics.
+ * Those counters live in the native render loop itself, so there is exactly
+ * one set of numbers to poll regardless of how frames reach pushFrame().
  */
 object CaptureMetrics {
 

@@ -2,8 +2,6 @@ package com.firstt175.deepdrop.ui
 
 import com.firstt175.deepdrop.prefs.LsfgConfig
 import com.firstt175.deepdrop.prefs.AiEngine
-import com.firstt175.deepdrop.prefs.CaptureSource
-import com.firstt175.deepdrop.prefs.DrawerEdge
 import com.firstt175.deepdrop.prefs.FramegenBackend
 import com.firstt175.deepdrop.prefs.LsfgPreferences
 import com.firstt175.deepdrop.prefs.OverlayMode
@@ -31,29 +29,24 @@ private val shared: MutableStateFlow<LsfgConfig> = MutableStateFlow(
         performanceMode = true,
         hdrMode = false,
         framegenFp16 = true,
-        captureSource = CaptureSource.MEDIA_PROJECTION,
+        poolFramegenMemory = true,
+        aliasFramegenScratch = true,
         renderResolutionScale = 0.9f,
         generationDeadlineMs = 0,
         bypassGenDeadlineMs = 0,
         bypassGenResumeDelayMs = 50,
         legalAccepted = false,
-        fpsCounterEnabled = false,
+        hudEnabled = false,
         frameGraphEnabled = false,
-        cpuStatEnabled = false,
-        gpuStatEnabled = false,
-        ramStatEnabled = false,
         hudPositionUnlocked = false,
         hudPositionX = 0.02f,
         hudPositionY = 0.02f,
-        drawerEdge = DrawerEdge.RIGHT,
         overlayMode = OverlayMode.DRAWER,
         presentMode = PresentMode.MAILBOX,
         waitForBusyGeneration = false,
         allowGenerationWhenBusy = false,
         losslessQueue = false,
         autoEnabledApps = emptySet(),
-        trustedOverlay = false,
-        gestureForwardingEnabled = false,
         framegenBackend = FramegenBackend.LSFG_DLL,
         aiModelUri = null,
         aiModelDisplayName = null,

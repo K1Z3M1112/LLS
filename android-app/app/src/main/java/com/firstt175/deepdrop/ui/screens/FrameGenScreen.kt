@@ -367,6 +367,33 @@ fun FrameGenSettingsSection(nav: NavHostController) {
                         },
                     )
                 }
+                // VRAM savers for the shader chain's intermediate images. Both are
+                // read once when frame generation (re)starts. Independent switches so
+                // either can be turned off to A/B test memory use or a driver issue.
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                ToggleRow(
+                    icon = Icons.Filled.Layers,
+                    title = "รวมหน่วยความจำภาพ (Pool)",
+                    description = "จองหน่วยความจำของภาพกลางทางเป็นก้อนเดียว ลดจำนวนการจองและส่วนเกิน " +
+                        "มีผลตอนเริ่มเจนเฟรมใหม่",
+                    checked = state.poolFramegenMemory,
+                    onCheckedChange = {
+                        prefs.setPoolFramegenMemory(it)
+                        refreshConfigState(prefs)
+                    },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                ToggleRow(
+                    icon = Icons.Filled.Memory,
+                    title = "ใช้หน่วยความจำร่วมกันระหว่างสเตจ (Alias)",
+                    description = "ภาพชั่วคราวของแต่ละสเตจใช้พื้นที่ซ้อนกัน ประหยัด VRAM ได้มากที่สุด " +
+                        "ถ้าภาพเพี้ยนหรือแอปค้างให้ปิด มีผลตอนเริ่มเจนเฟรมใหม่",
+                    checked = state.aliasFramegenScratch,
+                    onCheckedChange = {
+                        prefs.setAliasFramegenScratch(it)
+                        refreshConfigState(prefs)
+                    },
+                )
             }
         }
 
