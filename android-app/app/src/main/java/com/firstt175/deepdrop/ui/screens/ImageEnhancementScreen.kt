@@ -34,7 +34,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +46,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.firstt175.deepdrop.prefs.LsfgPreferences
-import com.firstt175.deepdrop.prefs.PresentMode
 import com.firstt175.deepdrop.prefs.UpscaleFilter
 import com.firstt175.deepdrop.session.NativeBridge
 import com.firstt175.deepdrop.ui.components.IconBadge
@@ -257,9 +255,7 @@ fun ImageEnhancementScreen(nav: NavHostController) {
             Text("Lossless queue: ${if (initial.losslessQueue) "On" else "Off"}", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp))
             Text("HUD / overlay", style = MaterialTheme.typography.titleSmall)
-            Text("FPS counter: ${if (initial.fpsCounterEnabled) "On" else "Off"} • Frame graph: ${if (initial.frameGraphEnabled) "On" else "Off"}", style = MaterialTheme.typography.bodySmall)
-            Text("CPU: ${if (initial.cpuStatEnabled) "On" else "Off"} • GPU: ${if (initial.gpuStatEnabled) "On" else "Off"} • RAM: ${if (initial.ramStatEnabled) "On" else "Off"}", style = MaterialTheme.typography.bodySmall)
-            Text("Drawer edge: ${initial.drawerEdge.name}", style = MaterialTheme.typography.bodySmall)
+            Text("HUD: ${if (initial.hudEnabled) "On" else "Off"}", style = MaterialTheme.typography.bodySmall)
             Text("Present mode: ${initial.presentMode.name}", style = MaterialTheme.typography.bodySmall)
         }
 
