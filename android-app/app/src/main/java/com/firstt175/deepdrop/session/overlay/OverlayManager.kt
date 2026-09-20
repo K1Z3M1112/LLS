@@ -1,6 +1,5 @@
 package com.firstt175.deepdrop.session.overlay
 
-import com.firstt175.deepdrop.session.NativeBridge
 import com.firstt175.deepdrop.session.diagnostics.AdbDisplayController
 import com.firstt175.deepdrop.session.service.LsfgAccessibilityService
 import com.firstt175.deepdrop.session.service.LsfgForegroundService
@@ -9,7 +8,6 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
@@ -111,32 +109,6 @@ class OverlayManager(private val ctx: Context) {
         c.drawLine(cx, cy, cx + r * 0.55f, cy - r * 0.55f, p)
     }
 
-    // latency: hourglass — two triangles meeting at the center point.
-    private fun buildLatencyIcon(): Drawable = hudIcon { c, p, w, h ->
-        val inset = w * 0.18f
-        val cx = w / 2f
-        val cy = h / 2f
-        val path = Path().apply {
-            moveTo(inset, inset)
-            lineTo(w - inset, inset)
-            lineTo(cx, cy)
-            lineTo(w - inset, h - inset)
-            lineTo(inset, h - inset)
-            lineTo(cx, cy)
-            close()
-        }
-        c.drawPath(path, p)
-    }
-
-    // queue: three stacked horizontal bars — reads as a pending list/stack.
-    private fun buildQueueIcon(): Drawable = hudIcon { c, p, w, h ->
-        val x1 = w * 0.12f
-        val x2 = w * 0.88f
-        for (y in floatArrayOf(h * 0.26f, h * 0.5f, h * 0.74f)) {
-            c.drawLine(x1, y, x2, y, p)
-        }
-    }
-
     // cpu: chip outline with pin ticks top/bottom.
     private fun buildCpuIcon(): Drawable = hudIcon { c, p, w, h ->
         val inset = w * 0.26f
@@ -176,7 +148,7 @@ class OverlayManager(private val ctx: Context) {
     private var recordingView: TextView? = null
     // Single container binding fps/graph/stats into one HUD unit — see show().
     private var hudClusterView: LinearLayout? = null
-    private var loadingView: TextView? = null
+    private var statusView: TextView? = null
     @Volatile private var firstFrameDisplayed = false
     private var insetsListener: Any? = null
     private var internalInsetsListener: Any? = null
@@ -190,7 +162,7 @@ class OverlayManager(private val ctx: Context) {
     private var surfaceLostListener: (() -> Unit)? = null
     private var overlayWidth: Int = 0
     private var overlayHeight: Int = 0
-    // Density last used to size the fps/graph/loading HUD views. Tracked
+    // Density last used to size the fps/graph/status HUD views. Tracked
     // separately from overlayWidth/Height because a `wm density` override
     // can change density without necessarily changing the reported pixel
     // dimensions in the same tick — see syncOverlayGeometry().
@@ -222,8 +194,6 @@ class OverlayManager(private val ctx: Context) {
     // ImageSpan (they're stateless — draw() only reads bounds already fixed
     // at construction time in hudIcon()).
     private val fpsIconDrawable: Drawable by lazy { buildFpsIcon() }
-    private val latencyIconDrawable: Drawable by lazy { buildLatencyIcon() }
-    private val queueIconDrawable: Drawable by lazy { buildQueueIcon() }
     private val cpuIconDrawable: Drawable by lazy { buildCpuIcon() }
     private val gpuIconDrawable: Drawable by lazy { buildGpuIcon() }
     private val ramIconDrawable: Drawable by lazy { buildRamIcon() }
@@ -241,7 +211,8 @@ class OverlayManager(private val ctx: Context) {
     fun show(outputWidth: Int? = null, outputHeight: Int? = null) {
         if (root != null) return
 
-        // Two host modes, controlled by the user's `trustedOverlay` preference:
+        // Two host modes, chosen by whether the accessibility service is bound
+        // (trusted overlay is always requested; there is no user setting):
         //
         //  - TYPE_APPLICATION_OVERLAY (default): the overlay sits below the
         //    system bars (status bar, navigation bar, notification shade) so
@@ -249,7 +220,7 @@ class OverlayManager(private val ctx: Context) {
         //    Works on most devices because BLOCK_UNTRUSTED_TOUCHES is
         //    permissive on Pixel/Samsung/Xiaomi/etc.
         //
-        //  - TYPE_ACCESSIBILITY_OVERLAY (opt-in via preference, requires the
+        //  - TYPE_ACCESSIBILITY_OVERLAY (used whenever the accessibility service is bound; requires the
         //    LsfgAccessibilityService to be bound): the overlay becomes a
         //    trusted overlay so InputDispatcher's BLOCK_UNTRUSTED_TOUCHES
         //    filter does not drop tap pass-through on strict AOSP builds (e.g.
@@ -263,7 +234,7 @@ class OverlayManager(private val ctx: Context) {
         val prefs = LsfgPreferences(ctx).load()
         hudPositionUnlocked = prefs.hudPositionUnlocked
         val a11y = LsfgAccessibilityService.instance
-        val useTrusted = prefs.trustedOverlay && a11y != null
+        val useTrusted = a11y != null
         isTrustedHost = useTrusted
         val hostCtx: Context = if (useTrusted) a11y!! else ctx
         val wm = hostCtx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -342,11 +313,10 @@ class OverlayManager(private val ctx: Context) {
 
         // FrameLayout background stays transparent — TextureView composites into
         // its parent's hardware layer, but we still want no opaque fill behind it
-        // before the first frame arrives so the loading status text remains
+        // before the first frame arrives so the status text remains
         // visible against the underlying app instead of a black slab.
         val layout = FrameLayout(ctx)
-        val loading = TextView(ctx).apply {
-            text = "Loading…"
+        val status = TextView(ctx).apply {
             setTextColor(Color.WHITE)
             setBackgroundColor(0x99000000.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
@@ -354,7 +324,7 @@ class OverlayManager(private val ctx: Context) {
             val padV = dp(16)
             setPadding(padH, padV, padH, padV)
             gravity = Gravity.CENTER
-            visibility = View.VISIBLE
+            visibility = View.GONE
         }
         firstFrameDisplayed = false
 
@@ -427,8 +397,8 @@ class OverlayManager(private val ctx: Context) {
                 val n = ++surfaceTextureUpdateCount
                 if (!firstFrameDisplayed) {
                     firstFrameDisplayed = true
-                    loadingView?.post { loadingView?.visibility = View.GONE }
-                    Log.i(TAG, "First overlay frame displayed — hiding loading indicator")
+                    statusView?.post { statusView?.visibility = View.GONE }
+                    Log.i(TAG, "First overlay frame displayed — hiding status indicator")
                 }
                 if (n <= 30 || n % 60 == 0) {
                     Log.d(TAG, "onSurfaceTextureUpdated #$n")
@@ -442,10 +412,8 @@ class OverlayManager(private val ctx: Context) {
         // is the only thing given a position on the root FrameLayout;
         // fps/graph/stats are just its children with LinearLayout.LayoutParams.
         // Two consequences, both intentional:
-        //  - toggling fps/graph/stats independently no longer leaves a gap
-        //    or requires a fixed reserved offset (HUD_STATS_TOP_DP used to
-        //    exist for exactly that reason) — LinearLayout reflows around
-        //    GONE children automatically.
+        //  - the HUD has a single on/off switch, so the three children are
+        //    always shown/hidden together (see setHudVisible()).
         //  - the whole cluster moves/resizes as a single unit any time we
         //    reposition the HUD (relayoutHud()), rather than three views
         //    that each need their own margins kept in sync.
@@ -457,9 +425,9 @@ class OverlayManager(private val ctx: Context) {
             background = null
             val pad = dp(4)
             setPadding(pad, pad, pad, pad)
-            // Starts hidden — updateHudClusterVisibility() reveals it once any
-            // of fps/graph/stats actually turns on, so no empty view shows up
-            // before LsfgForegroundService restores the saved HUD toggles.
+            // Starts hidden — setHudVisible(true) reveals it once the HUD switch
+            // is on, so no empty view shows up before LsfgForegroundService
+            // restores the saved HUD state.
             visibility = View.GONE
         }
 
@@ -582,7 +550,7 @@ class OverlayManager(private val ctx: Context) {
             FrameLayout.LayoutParams(overlayWidth, overlayHeight, Gravity.TOP or Gravity.START),
         )
         layout.addView(
-            loading,
+            status,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -605,7 +573,7 @@ class OverlayManager(private val ctx: Context) {
         graphView = graph
         statsView = stats
         hudClusterView = hudCluster
-        loadingView = loading
+        statusView = status
         textureView = tex
 
         wm.addView(layout, params)
@@ -671,26 +639,13 @@ class OverlayManager(private val ctx: Context) {
 
     fun updateStatus(line: String) {
         if (firstFrameDisplayed) return
-        val v = loadingView ?: return
+        val v = statusView ?: return
         v.post {
             if (!firstFrameDisplayed) {
-                v.text = line.ifBlank { "Loading…" }
-                v.visibility = View.VISIBLE
+                v.text = line
+                v.visibility = if (line.isBlank()) View.GONE else View.VISIBLE
             }
         }
-    }
-
-    fun showLoading(line: String = "Loading…") {
-        firstFrameDisplayed = false
-        loadingView?.post {
-            loadingView?.text = line
-            loadingView?.visibility = View.VISIBLE
-        }
-    }
-
-    fun hideLoading() {
-        firstFrameDisplayed = true
-        loadingView?.post { loadingView?.visibility = View.GONE }
     }
 
     // "<backend> · POST · Input: WxH → Output: WxH" — set once per (re)init by
@@ -701,22 +656,19 @@ class OverlayManager(private val ctx: Context) {
     private var streamInfoLine: String = ""
 
     /**
-     * The hudCluster should only take up space when at least one of
-     * fps/graph/stats is actually visible — otherwise toggling everything
-     * off would still leave an empty padded view sitting in the corner.
+     * Shows/hides the whole HUD (fps line, frame pacing graph, CPU/GPU/RAM line)
+     * as one unit. The cluster is GONE while off so no empty padded view is left
+     * sitting in the corner.
      */
-    private fun updateHudClusterVisibility() {
+    fun setHudVisible(visible: Boolean) {
         val cluster = hudClusterView ?: return
-        val anyVisible = fpsView?.visibility == View.VISIBLE ||
-            graphView?.visibility == View.VISIBLE ||
-            statsView?.visibility == View.VISIBLE
-        cluster.visibility = if (anyVisible) View.VISIBLE else View.GONE
-    }
-
-    fun setFpsVisible(visible: Boolean) {
-        fpsView?.post {
-            fpsView?.visibility = if (visible) View.VISIBLE else View.GONE
-            updateHudClusterVisibility()
+        cluster.post {
+            val v = if (visible) View.VISIBLE else View.GONE
+            fpsView?.visibility = v
+            graphView?.visibility = v
+            statsView?.visibility = v
+            if (!visible) graphView?.reset()
+            cluster.visibility = v
         }
     }
 
@@ -749,18 +701,12 @@ class OverlayManager(private val ctx: Context) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastFpsUpdateAtMs < 250L) return
         lastFpsUpdateAtMs = now
-        val queueMs = runCatching { NativeBridge.getAverageQueueMs() }.getOrDefault(0.0)
-        val latencyMs = runCatching { NativeBridge.getAverageLatencyMs() }.getOrDefault(0.0)
         // Real/generated fps as one "00/00" pair (same shape as the RAM
         // used/total readout below) instead of two separate icon+value
         // segments — matches the compact single-number-pair style of the
         // reference HUD row.
         val fpsLine = SpannableStringBuilder().apply {
             appendIconValue(fpsIconDrawable, "%.0f/%.0f".format(capturedFps, postedFps))
-            append("   ")
-            appendIconValue(latencyIconDrawable, "%.1fms".format(latencyMs))
-            append("   ")
-            appendIconValue(queueIconDrawable, "%.1fms".format(queueMs))
         }
         val text: CharSequence = if (streamInfoLine.isNotEmpty()) {
             SpannableStringBuilder(streamInfoLine).append("\n").append(fpsLine)
@@ -770,15 +716,6 @@ class OverlayManager(private val ctx: Context) {
         v.post { v.text = text }
     }
 
-    fun setFrameGraphVisible(visible: Boolean) {
-        val g = graphView ?: return
-        g.post {
-            g.visibility = if (visible) View.VISIBLE else View.GONE
-            if (!visible) g.reset()
-            updateHudClusterVisibility()
-        }
-    }
-
     fun pushFrameGraphSample(realFps: Float, generatedFps: Float) {
         val g = graphView ?: return
         if (g.visibility != View.VISIBLE) return
@@ -786,14 +723,6 @@ class OverlayManager(private val ctx: Context) {
         if (now - lastGraphSampleAtMs < 250L) return
         lastGraphSampleAtMs = now
         g.post { g.pushSample(realFps, generatedFps, realFps + generatedFps) }
-    }
-
-    /** Shows/hides the CPU/GPU/RAM readout line as a whole. */
-    fun setStatsVisible(visible: Boolean) {
-        statsView?.post {
-            statsView?.visibility = if (visible) View.VISIBLE else View.GONE
-            updateHudClusterVisibility()
-        }
     }
 
     /**
@@ -855,7 +784,7 @@ class OverlayManager(private val ctx: Context) {
         statsView = null
         hudClusterView = null
         recordingView = null
-        loadingView = null
+        statusView = null
         firstFrameDisplayed = false
         hostWindowManager = null
     }
@@ -1067,7 +996,7 @@ class OverlayManager(private val ctx: Context) {
      * Makes the on-screen keyboard, status bar, and notifications (heads-up
      * banners included) actually visible while a frame-gen session is running.
      *
-     * The overlay window normally covers the full screen — in `trustedOverlay`
+     * The overlay window normally covers the full screen — in trusted-overlay
      * mode (TYPE_ACCESSIBILITY_OVERLAY) it sits in a system layer *above* the
      * IME window AND above the status bar / notification shade, so even though
      * the real keyboard opens underneath, and even though a notification really
@@ -1150,7 +1079,7 @@ class OverlayManager(private val ctx: Context) {
 
     /**
      * Re-applies dp/sp-based sizing to the fps text, frame graph, stats line,
-     * and loading indicator after a resolution or DPI change (rotation into/
+     * and status indicator after a resolution or DPI change (rotation into/
      * out of landscape included). [syncOverlayGeometry] resizes the
      * game-frame TextureView itself; this is the HUD-chrome counterpart —
      * without it these views keep whatever pixel size they were built with and
@@ -1158,7 +1087,7 @@ class OverlayManager(private val ctx: Context) {
      */
     private fun relayoutHud() {
         val margin = dp(HUD_MARGIN_DP)
-        loadingView?.apply {
+        statusView?.apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             val padH = dp(28)
             val padV = dp(16)
