@@ -4,6 +4,7 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <cstdint>
 #include <memory>
 
 #ifdef __ANDROID__
@@ -11,6 +12,14 @@ struct AHardwareBuffer;
 #endif
 
 namespace LSFG::Core {
+
+    class MemoryPool;
+
+    /// Where a pooled image's memory comes from (see MemoryPool).
+    enum class MemoryPlacement : uint8_t {
+        Persistent, ///< lives for the whole context
+        Scratch     ///< only used inside one shader stage; may alias other stages
+    };
 
     ///
     /// C++ wrapper class for a Vulkan image.
@@ -36,6 +45,16 @@ namespace LSFG::Core {
             VkFormat format = VK_FORMAT_R8G8B8A8_UNORM,
             VkImageUsageFlags usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             VkImageAspectFlags aspectFlags = VK_IMAGE_ASPECT_COLOR_BIT);
+
+        ///
+        /// Create the image with memory taken from a MemoryPool. The view is
+        /// created now; the memory is bound by MemoryPool::finalize().
+        ///
+        /// @throws LSFG::vulkan_error if object creation fails.
+        ///
+        Image(const Core::Device& device, VkExtent2D extent, VkFormat format,
+            VkImageUsageFlags usage, VkImageAspectFlags aspectFlags,
+            MemoryPool& pool, MemoryPlacement placement);
 
         ///
         /// Create the image with shared backing memory.

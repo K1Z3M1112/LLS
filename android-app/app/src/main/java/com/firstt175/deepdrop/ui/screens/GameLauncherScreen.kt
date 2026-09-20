@@ -87,7 +87,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.firstt175.deepdrop.R
 import com.firstt175.deepdrop.prefs.LsfgPreferences
-import com.firstt175.deepdrop.prefs.LoadingScreenPrefs
 import com.firstt175.deepdrop.prefs.AppLanguage
 import com.firstt175.deepdrop.prefs.AppLanguagePrefs
 import com.firstt175.deepdrop.session.diagnostics.AdbDisplayController
@@ -97,7 +96,7 @@ import com.firstt175.deepdrop.session.diagnostics.DisplayOverrideState
 import com.firstt175.deepdrop.session.service.LsfgForegroundService
 import com.firstt175.deepdrop.session.LsfgLog
 import com.firstt175.deepdrop.session.diagnostics.PhysicalDisplayInfo
-import com.firstt175.deepdrop.session.capture.ShizukuDisplayPermission
+import com.firstt175.deepdrop.session.diagnostics.ShizukuDisplayPermission
 import com.firstt175.deepdrop.ui.components.LsfgCard
 import com.firstt175.deepdrop.ui.components.LsfgLogoMark
 import com.firstt175.deepdrop.ui.components.SectionHeader
@@ -111,8 +110,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-private const val GAME_LAUNCH_WARP_MS = 1400L
 
 private data class LaunchableApp(
     val label: String,
@@ -312,7 +309,6 @@ private suspend fun applyDisplayProfileAfterLaunch(
     }.getOrNull()
 }
 
-
 @Composable
 fun GameLauncherScreen(nav: NavHostController) {
     val context = LocalContext.current
@@ -369,9 +365,6 @@ fun GameLauncherScreen(nav: NavHostController) {
     // configuration change lands on the target app, not on us.
     LaunchedEffect(launchingApp) {
         val target = launchingApp ?: return@LaunchedEffect
-        if (LoadingScreenPrefs.isEnabled(context)) {
-            delay(GAME_LAUNCH_WARP_MS)
-        }
 
         launchApp(target)
 
@@ -781,17 +774,6 @@ fun GameLauncherScreen(nav: NavHostController) {
                 )
             }
         }
-    }
-
-    // Loading overlay plays over everything else while a tapped game's launch
-    // intent is about to fire (see the launchingApp LaunchedEffect above).
-    // Uses whichever style the user picked in Appearance, same as the app's
-    // own startup gate.
-    if (launchingApp != null) {
-        LoadingOverlay(
-            style = remember { LoadingScreenPrefs.getStyle(context) },
-            title = stringResource(R.string.warp_launching_game, launchingApp?.label.orEmpty()),
-        )
     }
     }
 }

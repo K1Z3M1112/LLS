@@ -12,6 +12,7 @@
 
 #include "lsfg_3_1.hpp"
 #include "lsfg_3_1p.hpp"
+#include "lsfg_memory.hpp"
 
 #include <volk.h>
 
@@ -94,6 +95,8 @@ struct State {
     bool performanceMode = false;
     bool framegenInitOk = false;  // tracks whether LSFG_3_1::initialize succeeded
     bool framegenFp16 = false;    // load IDs 304..351 (FP16 SPIR-V) instead of 353..400 (FP32 SPIR-V)
+    bool poolMemory = false;      // framegen: sub-allocate internal images from a shared block
+    bool aliasScratch = false;    // framegen: scratch images of different stages share memory
     bool hdr = false;
     float flowScale = 1.0f;
     int32_t framegenCtxId = -1;
@@ -140,6 +143,22 @@ struct State {
         // so a surface re-attach gets a fresh attempt.
         bool disabledForSession = false;
         bool storageUsage = false;
+        // True when GPU enhancement was requested but this surface cannot be a
+        // storage-image target (encoder/MediaRecorder surfaces usually cannot).
+        // Stops the "rebuild with STORAGE" retry loop; frames are enhanced into
+        // `stage` instead and then copied into the swapchain image.
+        bool storageUnavailable = false;
+        // Fit the source into the target with black bars instead of stretching it
+        // over the whole image. Set for the encoder tee, whose canvas size is fixed
+        // for the whole recording while the screen (source) can rotate.
+        bool letterbox = false;
+        // Offscreen storage image the enhancement pass renders into when the
+        // target cannot take storage writes (or must be letterboxed).
+        AhbImage stage{};
+        // Command-ring slot of the last submission that used `stage`. Its descriptor
+        // set is rewritten every frame, so the previous staged frame must have
+        // finished on the GPU before the next one is recorded.
+        int stageRingSlot = -1;
     } swap;
 
     // Secondary WSI target owned by MediaRecorder. It is intentionally separate
@@ -577,6 +596,13 @@ void destroySwapchain() {
     if (g.gpuImageEnhancement) {
         g.gpuImageEnhancement->clearDestinationBindings(g.vk);
     }
+    if (g.swap.stage.image != VK_NULL_HANDLE || g.swap.stage.memory != VK_NULL_HANDLE ||
+            g.swap.stage.ahb != nullptr) {
+        destroyAhbImage(g.vk, g.swap.stage);
+    }
+    g.swap.stage = AhbImage{};
+    g.swap.stageRingSlot = -1;
+    g.swap.storageUnavailable = false;
 
     if (g.vk.fn.vkDestroySemaphore != nullptr) {
         for (VkSemaphore s : g.swap.acquireSems) {
@@ -796,6 +822,10 @@ bool createSwapchain() {
         (caps.supportedUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT) != 0;
     VkImageUsageFlags swapUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     if (storageUsage) swapUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
+    g.swap.storageUnavailable =
+        g.imageEnhancementEnabled.load(std::memory_order_relaxed) &&
+        g.imageEnhancementBackend.load(std::memory_order_relaxed) == 1 &&
+        (caps.supportedUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT) == 0;
 
     const VkSwapchainCreateInfoKHR sci2{
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -953,12 +983,90 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
     const bool enhancementRequested =
         g.imageEnhancementEnabled.load(std::memory_order_relaxed) &&
         g.imageEnhancementBackend.load(std::memory_order_relaxed) == 1;
-    if (enhancementRequested && !g.swap.storageUsage) {
+    if (enhancementRequested && !g.swap.storageUsage && !g.swap.storageUnavailable) {
         destroySwapchain();
         if (!createSwapchain()) return false;
     }
 
     if (g.swap.acquireSems.empty()) return false;
+
+    // ---- Destination rectangle ------------------------------------------------
+    // Display path: stretch the whole source over the whole swapchain image (its
+    // extent follows the live window). Encoder tee (g.swap.letterbox): the canvas is
+    // fixed for the whole recording, so when the screen rotates / the aspect changes
+    // fit the frame with black bars rather than stretching it.
+    int32_t fitX = 0;
+    int32_t fitY = 0;
+    uint32_t fitW = g.swap.extent.width;
+    uint32_t fitH = g.swap.extent.height;
+    if (g.swap.letterbox && src.extent.width > 0 && src.extent.height > 0 &&
+            fitW > 0 && fitH > 0) {
+        const uint64_t lhs = static_cast<uint64_t>(src.extent.width) * g.swap.extent.height;
+        const uint64_t rhs = static_cast<uint64_t>(src.extent.height) * g.swap.extent.width;
+        const uint64_t diff = lhs > rhs ? lhs - rhs : rhs - lhs;
+        if (diff * 100u > std::max(lhs, rhs)) { // more than ~1% aspect difference
+            if (lhs > rhs) {
+                fitH = static_cast<uint32_t>(rhs / src.extent.width);   // source wider: fit width
+            } else {
+                fitW = static_cast<uint32_t>(lhs / src.extent.height);  // source taller: fit height
+            }
+            fitW = std::clamp<uint32_t>(fitW & ~1u, 2u, g.swap.extent.width);
+            fitH = std::clamp<uint32_t>(fitH & ~1u, 2u, g.swap.extent.height);
+            fitX = static_cast<int32_t>((g.swap.extent.width - fitW) / 2);
+            fitY = static_cast<int32_t>((g.swap.extent.height - fitH) / 2);
+        }
+    }
+    const bool fitsWhole =
+        fitW == g.swap.extent.width && fitH == g.swap.extent.height;
+
+    // Enhancement that cannot render straight into the swapchain image (target has
+    // no STORAGE usage, e.g. the MediaRecorder surface, or the frame must be
+    // letterboxed) renders into an offscreen stage image first and is then copied
+    // over. Without this the encoder tee silently fell back to a plain blit of the
+    // RAW frame whenever enhancement was on.
+    bool viaStage = enhancementRequested &&
+        (!g.swap.storageUsage || !fitsWhole) &&
+        src.format == VK_FORMAT_R8G8B8A8_UNORM &&
+        g.swap.format == VK_FORMAT_R8G8B8A8_UNORM;
+    if (viaStage) {
+        AhbImage &st = g.swap.stage;
+        if (st.image == VK_NULL_HANDLE || st.extent.width != fitW || st.extent.height != fitH) {
+            if (g.vk.device != VK_NULL_HANDLE && g.vk.fn.vkDeviceWaitIdle != nullptr) {
+                g.vk.fn.vkDeviceWaitIdle(g.vk.device);
+            }
+            // Cached storage views are keyed by VkImage handle; a recreated image can
+            // reuse the handle value, so drop them together with the old image.
+            if (g.gpuImageEnhancement) g.gpuImageEnhancement->clearDestinationBindings(g.vk);
+            destroyAhbImage(g.vk, st);
+            st = AhbImage{};
+            if (createAhbImage(g.vk, fitW, fitH, VK_FORMAT_R8G8B8A8_UNORM, st) != kOk) {
+                LOGW("blitOutputToSwapchain: stage image %ux%u allocation failed; "
+                     "enhancement skipped for this target", fitW, fitH);
+                destroyAhbImage(g.vk, st);
+                st = AhbImage{};
+                viaStage = false;
+            }
+        }
+    }
+
+    // The stage image has ONE descriptor set that is rewritten for every frame; the
+    // GPU must be done with the previous staged frame before it is touched again.
+    // Encoder tee samples are droppable, so skip this one instead of stalling.
+    if (viaStage && g.swap.stageRingSlot >= 0) {
+        const uint32_t slot = static_cast<uint32_t>(g.swap.stageRingSlot);
+        if (slot < kCommandRingSize && g.vk.ringFenceArmed[slot] &&
+                g.vk.fn.vkGetFenceStatus(g.vk.device, g.vk.ringFences[slot]) != VK_SUCCESS) {
+            return false;
+        }
+    }
+
+    // Take the command buffer BEFORE acquiring a swapchain image. If the ring is
+    // exhausted the frame is simply dropped; doing it after the acquire (as before)
+    // left an acquired image that was never presented and an acquire semaphore
+    // with a pending signal, which slowly starved the swapchain.
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    if (!acquireCommandRing(g.vk, cb, fence)) return false;
 
     // Pick an acquire semaphore from the round-robin pool. Using a single
     // semaphore risks "semaphore already has a pending wait" on fast backs.
@@ -1020,9 +1128,6 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
         return false;
     }
 
-    VkCommandBuffer cb = VK_NULL_HANDLE;
-    VkFence fence = VK_NULL_HANDLE;
-    if (!acquireCommandRing(g.vk, cb, fence)) return false;
     const VkCommandBufferBeginInfo bi{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -1038,6 +1143,7 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
     bool gpuEnhance =
         enhancementRequested &&
         g.swap.storageUsage &&
+        fitsWhole &&
         src.format == VK_FORMAT_R8G8B8A8_UNORM &&
         g.swap.format == VK_FORMAT_R8G8B8A8_UNORM;
 
@@ -1053,10 +1159,23 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
         }
     }
 
-    const VkImageLayout srcLayout = gpuEnhance
+    if (viaStage) {
+        if (!g.gpuImageEnhancement)
+            g.gpuImageEnhancement = std::make_unique<GpuImageEnhancement>();
+        viaStage = g.gpuImageEnhancement->initialize(g.vk);
+        if (!viaStage) {
+            static std::atomic<bool> loggedStageInitFailure{false};
+            if (!loggedStageInitFailure.exchange(true, std::memory_order_relaxed))
+                LOGW("image-enhancement: Vulkan GPU pipeline unavailable for staged target");
+        }
+    }
+    // The source is read by the compute pass in both the direct and staged modes.
+    const bool srcCompute = gpuEnhance || viaStage;
+
+    const VkImageLayout srcLayout = srcCompute
         ? VK_IMAGE_LAYOUT_GENERAL
         : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    const VkAccessFlags srcAccess = gpuEnhance
+    const VkAccessFlags srcAccess = srcCompute
         ? (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT)
         : VK_ACCESS_TRANSFER_READ_BIT;
 
@@ -1089,8 +1208,91 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
         cb,
         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
         gpuEnhance ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-                   : VK_PIPELINE_STAGE_TRANSFER_BIT,
+                   : (viaStage ? (VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT)
+                               : VK_PIPELINE_STAGE_TRANSFER_BIT),
         0, 0, nullptr, 0, nullptr, 2, pre);
+
+    bool srcInGeneral = srcCompute; // layout the source is in for the release barrier
+    bool stageCopied = false;
+
+    // Letterbox bars: clear the whole target to black before the fitted frame goes in.
+    if (!gpuEnhance && !fitsWhole) {
+        VkClearColorValue black{};
+        black.float32[0] = 0.0f;
+        black.float32[1] = 0.0f;
+        black.float32[2] = 0.0f;
+        black.float32[3] = 1.0f;
+        const VkImageSubresourceRange clearRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        g.vk.fn.vkCmdClearColorImage(
+            cb, g.swap.images[imageIdx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            &black, 1, &clearRange);
+        const VkMemoryBarrier clearDone{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        };
+        g.vk.fn.vkCmdPipelineBarrier(
+            cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 1, &clearDone, 0, nullptr, 0, nullptr);
+    }
+
+    // Staged enhancement: source -> enhancement + upscale -> stage image -> copy into
+    // the (possibly letterboxed) swapchain image. Same shader and settings as the
+    // direct path, so the recorded frame matches what the display shows.
+    if (viaStage) {
+        const VkImage stageImg = g.swap.stage.image;
+        const VkImageMemoryBarrier stageIn = makeImageBarrier(
+            stageImg, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+        g.vk.fn.vkCmdPipelineBarrier(
+            cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &stageIn);
+
+        const int stageFilterMode =
+            g.upscaleFilterMode.load(std::memory_order_relaxed);
+        const float stageContrast =
+            g.imageEnhancementContrast.load(std::memory_order_relaxed);
+        const float stageSaturation =
+            g.imageEnhancementSaturation.load(std::memory_order_relaxed);
+
+        if (g.gpuImageEnhancement->record(
+                g.vk, cb, src.image, src.extent,
+                stageImg, g.swap.stage.extent,
+                stageFilterMode, stageContrast, stageSaturation)) {
+            const VkImageMemoryBarrier stageOut = makeImageBarrier(
+                stageImg, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+            g.vk.fn.vkCmdPipelineBarrier(
+                cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &stageOut);
+            const VkImageCopy stageRegion{
+                .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                .srcOffset = {0, 0, 0},
+                .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                .dstOffset = {fitX, fitY, 0},
+                .extent = {fitW, fitH, 1},
+            };
+            g.vk.fn.vkCmdCopyImage(
+                cb, stageImg, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                g.swap.images[imageIdx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                1, &stageRegion);
+            stageCopied = true;
+        } else {
+            LOGW("image-enhancement: staged compute record failed; using transfer path");
+            const VkImageMemoryBarrier srcBack = makeImageBarrier(
+                src.image, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                VK_ACCESS_TRANSFER_READ_BIT,
+                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+            g.vk.fn.vkCmdPipelineBarrier(
+                cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &srcBack);
+            srcInGeneral = false;
+        }
+    }
 
     if (gpuEnhance) {
         const int filterMode =
@@ -1125,7 +1327,7 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
         }
     }
 
-    if (!gpuEnhance) {
+    if (!gpuEnhance && !stageCopied) {
         static std::atomic<bool> loggedBlitMode{false};
 
         if (src.extent.width == g.swap.extent.width &&
@@ -1167,9 +1369,9 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
                     static_cast<int32_t>(src.extent.height), 1,
                 }},
                 .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-                .dstOffsets = {{0, 0, 0}, {
-                    static_cast<int32_t>(g.swap.extent.width),
-                    static_cast<int32_t>(g.swap.extent.height), 1,
+                .dstOffsets = {{fitX, fitY, 0}, {
+                    fitX + static_cast<int32_t>(fitW),
+                    fitY + static_cast<int32_t>(fitH), 1,
                 }},
             };
             g.vk.fn.vkCmdBlitImage(
@@ -1196,8 +1398,12 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
             0, 0, nullptr, 0, nullptr, 2, post);
     } else {
         const VkImageMemoryBarrier srcRelease = makeImageBarrier(
-            src.image, VK_ACCESS_TRANSFER_READ_BIT, 0,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+            src.image,
+            srcInGeneral ? (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT)
+                         : VK_ACCESS_TRANSFER_READ_BIT,
+            0,
+            srcInGeneral ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_GENERAL,
             g.vk.computeFamilyIdx, foreign);
         const VkImageMemoryBarrier dstPresent = makeImageBarrier(
             g.swap.images[imageIdx], VK_ACCESS_TRANSFER_WRITE_BIT, 0,
@@ -1205,7 +1411,10 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
             VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
         VkImageMemoryBarrier post[2] = {srcRelease, dstPresent};
         g.vk.fn.vkCmdPipelineBarrier(
-            cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            cb,
+            srcInGeneral ? (VK_PIPELINE_STAGE_TRANSFER_BIT |
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
+                         : VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
             0, 0, nullptr, 0, nullptr, 2, post);
     }
@@ -1216,7 +1425,10 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
     VkSemaphore waitSems[2] = { acquireSem, framegenDoneSemaphore };
     const VkPipelineStageFlags waitStages[2] = {
         VK_PIPELINE_STAGE_TRANSFER_BIT,
-        gpuEnhance ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT
+        gpuEnhance ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                   : (viaStage ? (VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT)
+                               : VK_PIPELINE_STAGE_TRANSFER_BIT)
     };
     const uint32_t waitCount = framegenDoneSemaphore != VK_NULL_HANDLE ? 2u : 1u;
     const VkSubmitInfo si{
@@ -1238,6 +1450,7 @@ bool blitOutputToSwapchain(const AhbImage &src, VkSemaphore framegenDoneSemaphor
     for (uint32_t i = 0; i < kCommandRingSize; ++i) {
         if (g.vk.ringFences[i] == fence) {
             g.vk.ringFenceArmed[i] = true;
+            if (viaStage) g.swap.stageRingSlot = static_cast<int>(i);
             break;
         }
     }
@@ -1381,6 +1594,9 @@ bool initFramegen(const char *cacheDir) {
     };
 
     try {
+        // Must be set before initialize(): the switches are copied into the
+        // framegen device state there and read while each context is built.
+        LSFG::setMemoryOptions(g.poolMemory, g.aliasScratch);
         if (g.performanceMode) {
             LSFG_3_1P::initialize(g.vk.deviceUuid, g.hdr, g.flowScale,
                                   static_cast<uint64_t>(g.multiplier), loader);
@@ -1429,6 +1645,17 @@ bool createFramegenContext() {
     } catch (const std::exception &e) {
         LOGE("createContextFromAHB threw: %s", e.what());
         return false;
+    }
+    {
+        const auto mem = LSFG::getMemoryStats();
+        const auto opt = LSFG::getMemoryOptions();
+        LOGI("framegen image memory: pool=%d alias=%d | pooled=%.1f MiB scratch=%.1f MiB "
+             "(would be %.1f MiB unaliased) allocations=%u",
+             opt.pooled ? 1 : 0, opt.aliasScratch ? 1 : 0,
+             static_cast<double>(mem.persistentBytes) / (1024.0 * 1024.0),
+             static_cast<double>(mem.scratchBytes) / (1024.0 * 1024.0),
+             static_cast<double>(mem.scratchUnaliasedBytes) / (1024.0 * 1024.0),
+             mem.allocationCount);
     }
     return true;
 }
@@ -1497,6 +1724,9 @@ bool blitOutputToRecordingSurfaceLocked(const AhbImage &out) {
     const uint32_t savedSwapH = g.swapWinH;
     const int savedPresentMode = g.presentModeRequested.load(std::memory_order_relaxed);
     g.swap = std::move(g.recordSwap);
+    // Encoder canvas size is fixed for the whole recording; a rotation changes the
+    // source aspect, so fit it with black bars instead of stretching it.
+    g.swap.letterbox = true;
     g.outWindow = g.recordWindow;
     g.outWidth = g.recordWidth;
     g.outHeight = g.recordHeight;
@@ -2537,6 +2767,8 @@ int initRenderLoop(const char *cacheDir, const RenderLoopConfig &cfg) {
     g.multiplier = totalMult - 1;  // generationCount = N extra frames per pair
     g.performanceMode = cfg.performance;
     g.framegenFp16 = cfg.framegenFp16;
+    g.poolMemory = cfg.poolMemory;
+    g.aliasScratch = cfg.aliasScratch;
     g.hdr = cfg.hdr;
     // flowScale on the prefs slider is "0.25..1.0" in user-friendly form, but
     // framegen wants the reciprocal (Linux passes 1.0f / conf.flowScale at

@@ -27,7 +27,6 @@ import androidx.compose.material3.TextButton
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,17 +46,26 @@ fun RecordingGalleryScreen(nav: NavHostController) {
     val ctx = LocalContext.current
     val recordingPrefs = remember { ctx.getSharedPreferences("recording", android.content.Context.MODE_PRIVATE) }
     var sessionRecording by remember { mutableStateOf(recordingPrefs.getBoolean("session_recording", false)) }
-    var microphone by remember { mutableStateOf(recordingPrefs.getBoolean("mic", false)) }
+    // Audio source for recordings: "off", "mic" (microphone) or "app" (what the game plays).
+    fun currentAudioSource(): String =
+        recordingPrefs.getString("audio_source", null)
+            ?: if (recordingPrefs.getBoolean("mic", false)) "mic" else "off"
+    var audioSource by remember { mutableStateOf(currentAudioSource()) }
+    // Source waiting on the RECORD_AUDIO prompt (both mic and app audio need it).
+    var pendingAudioSource by remember { mutableStateOf<String?>(null) }
+    fun applyAudioSource(value: String) {
+        audioSource = value
+        recordingPrefs.edit()
+            .putString("audio_source", value)
+            .putBoolean("mic", value == "mic") // kept in sync for older readers
+            .apply()
+    }
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
-            microphone = true
-            recordingPrefs.edit().putBoolean("mic", true).apply()
-        } else {
-            microphone = false
-            recordingPrefs.edit().putBoolean("mic", false).apply()
-        }
+        val wanted = pendingAudioSource
+        pendingAudioSource = null
+        applyAudioSource(if (granted && wanted != null) wanted else "off")
     }
     var items by remember { mutableStateOf(loadRecordings(ctx)) }
     var selected by remember { mutableStateOf<RecordingItem?>(null) }
@@ -96,24 +104,57 @@ fun RecordingGalleryScreen(nav: NavHostController) {
                         modifier = Modifier.weight(1f),
                     )
                 }
-                androidx.compose.material3.FilterChip(
-                    selected = microphone,
-                    enabled = sessionRecording,
-                    onClick = {
-                        if (!microphone) {
-                            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                microphone = true
-                                recordingPrefs.edit().putBoolean("mic", true).apply()
-                            } else {
-                                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            }
-                        } else {
-                            microphone = false
-                            recordingPrefs.edit().putBoolean("mic", false).apply()
-                        }
-                    },
-                    label = { Text(if (microphone) "Microphone: On" else "Microphone: Off") },
+                Text("Audio", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "App audio records what the game plays (Android 10+); a game that blocks " +
+                        "audio capture comes out silent.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf("off" to "Off", "mic" to "Microphone", "app" to "App audio")
+                        .forEach { (value, title) ->
+                            androidx.compose.material3.FilterChip(
+                                selected = audioSource == value,
+                                enabled = sessionRecording,
+                                onClick = {
+                                    if (value == "off" ||
+                                        ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
+                                        PackageManager.PERMISSION_GRANTED
+                                    ) {
+                                        applyAudioSource(value)
+                                    } else {
+                                        pendingAudioSource = value
+                                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                },
+                                label = { Text(title) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                }
+                Text("Video orientation", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Fixed for the whole clip. If the screen rotates while recording, the picture is " +
+                        "fitted with black bars instead of being stretched.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf("auto" to "Auto", "portrait" to "Portrait", "landscape" to "Landscape")
+                        .forEach { (value, title) ->
+                            androidx.compose.material3.FilterChip(
+                                selected = orientation == value,
+                                enabled = sessionRecording,
+                                onClick = {
+                                    orientation = value
+                                    recordingPrefs.edit().putString("orientation", value).apply()
+                                },
+                                label = { Text(title) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                }
             }
         }
 

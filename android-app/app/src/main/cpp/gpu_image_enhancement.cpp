@@ -372,6 +372,13 @@ void GpuImageEnhancement::clearDestinationBindings(VulkanSession &vk) {
         if (entry.view != VK_NULL_HANDLE && vk.fn.vkDestroyImageView)
             vk.fn.vkDestroyImageView(vk.device, entry.view, nullptr);
     }
+    // The destination descriptor sets were allocated from this pool and are never
+    // freed individually, so without a reset every swapchain/stage rebuild (rotation,
+    // present-mode change, recording start/stop) leaked its sets until the pool ran dry
+    // and enhancement silently stopped working. The device is idle here.
+    if (descriptorPool_ != VK_NULL_HANDLE && vk.fn.vkResetDescriptorPool != nullptr) {
+        vk.fn.vkResetDescriptorPool(vk.device, descriptorPool_, 0);
+    }
     destinationBindings_.clear();
 }
 
