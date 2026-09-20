@@ -35,17 +35,6 @@
 
     <!-- Section eyebrows -->
     <string name="section_frame_generation">การสร้างเฟรม</string>
-    <string name="section_overlay_handle">ที่จับโอเวอร์เลย์</string>
-    <string name="section_hud">HUD</string>
-    <string name="section_trusted_overlay">การส่งต่อการสัมผัส</string>
-    <string name="param_trusted_overlay">โอเวอร์เลย์ที่เชื่อถือได้ (Accessibility)</string>
-    <string name="param_trusted_overlay_desc">แสดงโอเวอร์เลย์เป็นพื้นผิว Accessibility ที่เชื่อถือได้ เพื่อให้การแตะไปถึงแอปด้านล่างบนอุปกรณ์ที่เข้มงวด (เช่น Orange Pi 5 Ultra) ซึ่งปกติจะถูกบล็อก ข้อแลกเปลี่ยน: ขณะเซสชันทำงาน โอเวอร์เลย์จะบังแถบสถานะและแถบนำทาง — คุณจะดึงการแจ้งเตือนหรือแตะโฮม/ย้อนกลับไม่ได้ ปิดไว้ถ้าอุปกรณ์ของคุณส่งต่อการแตะได้อยู่แล้ว เปิดเฉพาะเมื่อแตะทะลุไม่ได้เท่านั้น ต้องเปิดใช้งานบริการ Accessibility ของ LSFG-Android+ ก่อน</string>
-    <string name="section_capture_mode">โหมดการจับภาพ</string>
-    <string name="capture_mode_mediaprojection">MediaProjection</string>
-    <string name="capture_mode_shizuku">Shizuku capture</string>
-    <string name="capture_mode_root">Root capture</string>
-    <string name="param_frame_graph">กราฟจังหวะเฟรม</string>
-    <string name="param_frame_graph_desc">แสดงกราฟช่วงเวลาของเฟรมที่สร้างขึ้นแบบเรียลไทม์บนโอเวอร์เลย์ มีประโยชน์สำหรับวินิจฉัยอาการกระตุก</string>
 
     <string name="dll_status_none">ยังไม่ได้เลือกไฟล์ Lossless.dll</string>
     <string name="dll_pick_button">เลือก Lossless.dll</string>
@@ -69,13 +58,6 @@
     <string name="param_hdr_desc">เปิดใช้เฉพาะเมื่ออุปกรณ์และเกมของคุณส่งออกภาพแบบ HDR</string>
     <string name="param_framegen_fp16">เชเดอร์สร้างเฟรมแบบ FP16</string>
     <string name="param_framegen_fp16_desc">ใช้เชเดอร์ความละเอียดครึ่งหนึ่งที่คอมไพล์ไว้ล่วงหน้าใน Lossless.dll แทนชุด FP32 ความละเอียดเต็ม ลดภาระ GPU และแบนด์วิดท์หน่วยความจำ คุณภาพแทบไม่ต่างกัน หากเกิดปัญหาจะสลับกลับไปใช้ FP32 โดยอัตโนมัติ</string>
-    <string name="param_fps_counter">ตัวนับ FPS บนโอเวอร์เลย์</string>
-    <string name="param_fps_counter_desc">แสดงตัวเลข FPS ขนาดเล็กที่มุมซ้ายบนของโอเวอร์เลย์ MediaProjection นับเฟรมที่จับภาพได้ ส่วน Shizuku capture นับเฟรมเป้าหมายที่กรอง UID แบบมีสิทธิ์สูง</string>
-    <string name="param_drawer_edge">ตำแหน่งที่จับลิ้นชัก</string>
-    <string name="drawer_edge_left">ซ้าย</string>
-    <string name="drawer_edge_right">ขวา</string>
-    <string name="drawer_edge_top">บน</string>
-    <string name="drawer_edge_bottom">ล่าง</string>
 
 
     <string name="language_menu_item">ภาษา</string>
@@ -171,7 +153,7 @@
     <string name="settings_games">เกม</string>
     <string name="settings_system">ระบบ</string>
     <string name="nav_framegen_pacing_desc">การสร้างเฟรม, FPS และการจัดจังหวะ</string>
-    <string name="nav_overlay_display_desc">Capture, HUD และตำแหน่งโอเวอร์เลย์</string>
+    <string name="nav_overlay_display_desc">HUD, โหมดแสดงผล, การปรับภาพ และเสียง</string>
     <string name="nav_setup">การตั้งค่าเริ่มต้น</string>
     <string name="nav_setup_desc">สิทธิ์และการเตรียมระบบ</string>
     <string name="nav_profile_desc">ข้อมูลเครื่องและการวิเคราะห์ระบบ</string>
@@ -193,16 +175,6 @@
     <string name="appearance_compact">เลย์เอาต์กะทัดรัด</string>
     <string name="appearance_compact_desc">ลดระยะห่างให้เหมาะกับหน้าจอขนาดเล็ก</string>
     <string name="appearance_apply">ใช้การตั้งค่า</string>
-    <string name="appearance_startup">เริ่มต้นแอป</string>
-    <string name="appearance_loading_screen">หน้าจอ Loading</string>
-    <string name="appearance_loading_screen_desc">แสดงแอนิเมชันสั้นๆ ระหว่างเปิดแอป</string>
-    <string name="warp_loading_title">กำลังเตรียมเซสชัน…</string>
-    <string name="loading_style_warp">วาร์ป</string>
-    <string name="loading_style_pulse">คลื่นพัลส์</string>
-    <string name="loading_style_orbit">วงโคจร</string>
-    <string name="loading_style_wave">คลื่นเสียง</string>
-    <string name="loading_style_minimal">มินิมอล</string>
-    <string name="warp_launching_game">กำลังเข้า %1$s…</string>
 
     <string name="home_launcher">ตัวเปิดเกม</string>
     <string name="home_my_games">เกมของฉัน</string>
@@ -245,7 +217,7 @@
     <string name="action_expand">ขยาย</string>
     <string name="action_collapse">ย่อ</string>
 
-    <!-- First-launch disclosure screen, shown once before the loading screen -->
+    <!-- First-launch disclosure screen, shown once before the home screen -->
     <string name="disclosure_title">ก่อนเริ่มใช้งาน</string>
     <string name="disclosure_subtitle">DeepDrop ต้องใช้สิทธิ์บางอย่างของอุปกรณ์เพื่อสร้างเฟรมทับเกมของคุณ ด้านล่างนี้คือสิทธิ์แต่ละอย่างและเหตุผล — สามารถตรวจสอบหรือเปลี่ยนแปลงได้ภายหลังจากเมนูตั้งค่า</string>
     <string name="disclosure_item_overlay_title">แสดงผลทับแอปอื่น</string>

@@ -5,10 +5,6 @@ import com.firstt175.deepdrop.session.NativeBridge
 import com.firstt175.deepdrop.session.capture.CaptureEngine
 import com.firstt175.deepdrop.session.capture.CaptureMetrics
 import com.firstt175.deepdrop.session.capture.GameScreenRecorder
-import com.firstt175.deepdrop.session.capture.RootCaptureEngine
-import com.firstt175.deepdrop.session.capture.RootCaptureService
-import com.firstt175.deepdrop.session.capture.ShizukuCaptureEngine
-import com.firstt175.deepdrop.session.capture.ShizukuCaptureUserService
 import com.firstt175.deepdrop.session.diagnostics.AdbDisplayController
 import com.firstt175.deepdrop.session.diagnostics.AppDisplayProfile
 import com.firstt175.deepdrop.session.diagnostics.AppDisplayProfileStore
@@ -43,7 +39,6 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.firstt175.deepdrop.R
 import com.firstt175.deepdrop.prefs.AiEngine
-import com.firstt175.deepdrop.prefs.CaptureSource
 import com.firstt175.deepdrop.prefs.FramegenBackend
 import com.firstt175.deepdrop.prefs.LsfgConfig
 import com.firstt175.deepdrop.prefs.LsfgPreferences
@@ -80,8 +75,6 @@ class LsfgForegroundService : Service() {
 
     private var projection: MediaProjection? = null
     private var capture: CaptureEngine? = null
-    private var shizukuCapture: ShizukuCaptureEngine? = null
-    private var rootCapture: RootCaptureEngine? = null
     private var overlay: OverlayManager? = null
     private var drawer: SettingsDrawerOverlay? = null
     private var recorder: GameScreenRecorder? = null
@@ -179,32 +172,27 @@ class LsfgForegroundService : Service() {
     private var shuttingDown: Boolean = false
     @Volatile
     private var pendingFpsCounter: Boolean = false
-    private var pendingPrivilegedVideoStart: ShizukuVideoStart? = null
     private val mainHandler = Handler(Looper.getMainLooper())
-    // HUD CPU/GPU/RAM readout — independent per-metric toggles (see
-    // SettingsDrawerOverlay's "System stats" switches), sampled on a simple
-    // timer rather than tied to capture/frame-gen listeners since these three
+    // HUD CPU/GPU/RAM readout — shown as part of the single HUD switch, sampled on a
+    // simple timer rather than tied to capture/frame-gen listeners since these
     // numbers change on their own schedule, not per rendered frame.
-    @Volatile private var cpuStatEnabled: Boolean = false
-    @Volatile private var gpuStatEnabled: Boolean = false
-    @Volatile private var ramStatEnabled: Boolean = false
+    @Volatile private var hudStatsEnabled: Boolean = false
     private var statsPollRunnable: Runnable? = null
-    private fun statsAnyEnabled() = cpuStatEnabled || gpuStatEnabled || ramStatEnabled
 
     private fun startStatsPollingIfNeeded() {
         if (statsPollRunnable != null) return
-        if (!statsAnyEnabled()) return
+        if (!hudStatsEnabled) return
         SystemStatsSampler.resetTrackers()
         val r = object : Runnable {
             override fun run() {
                 val ov = overlay
-                if (ov != null && statsAnyEnabled()) {
+                if (ov != null && hudStatsEnabled) {
                     val stats = SystemStatsSampler.sample(applicationContext)
                     ov.updateStats(
-                        cpuPercent = if (cpuStatEnabled) stats.cpuPercent else null,
-                        gpuPercent = if (gpuStatEnabled) stats.gpuPercent else null,
-                        ramUsedMb = if (ramStatEnabled) stats.ramUsedMb else null,
-                        ramTotalMb = if (ramStatEnabled) stats.ramTotalMb else null,
+                        cpuPercent = stats.cpuPercent,
+                        gpuPercent = stats.gpuPercent,
+                        ramUsedMb = stats.ramUsedMb,
+                        ramTotalMb = stats.ramTotalMb,
                     )
                 }
                 if (statsPollRunnable === this) {
@@ -214,13 +202,6 @@ class LsfgForegroundService : Service() {
         }
         statsPollRunnable = r
         mainHandler.post(r)
-    }
-
-    private fun stopStatsPollingIfIdle() {
-        if (statsAnyEnabled()) return
-        statsPollRunnable?.let { mainHandler.removeCallbacks(it) }
-        statsPollRunnable = null
-        overlay?.setStatsVisible(false)
     }
 
     private fun stopStatsPolling() {
@@ -420,10 +401,6 @@ class LsfgForegroundService : Service() {
         stopGameRecording()
         capture?.stop()
         capture = null
-        shizukuCapture?.stop()
-        shizukuCapture = null
-        rootCapture?.stop()
-        rootCapture = null
         if (lsfgContextActive) {
             runCatching { NativeBridge.setOutputSurface(null, 0, 0) }
             runCatching { NativeBridge.destroyContext() }
@@ -553,7 +530,7 @@ class LsfgForegroundService : Service() {
      * projection token). Used by the idle "show drawer, no session started"
      * path — see [handleShowDrawer] — where we have nothing session-specific
      * to base a type on yet. [handleStart] calls startForeground() again
-     * once it knows the real capture source, which is allowed and simply
+     * once a MediaProjection token is available, which is allowed and simply
      * updates the notification/type in place.
      */
     private fun promoteToForegroundSpecialUse() {
@@ -571,25 +548,11 @@ class LsfgForegroundService : Service() {
 
     private fun handleStart(intent: Intent) {
         _isRunning.value = true
-        val captureSource = CaptureSource.fromPref(intent.getStringExtra(EXTRA_CAPTURE_SOURCE))
-        val isPrivilegedCapture = captureSource == CaptureSource.SHIZUKU || captureSource == CaptureSource.ROOT
-        val usesMediaProjectionVideo = captureSource == CaptureSource.MEDIA_PROJECTION
-        // Pick the FGS type that matches what we'll actually do this session.
-        // - MediaProjection capture → FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
-        //   requires a live projection token (handled below) and the matching
-        //   uses-permission in the manifest.
-        // - Shizuku capture → FOREGROUND_SERVICE_TYPE_SPECIAL_USE. Without
-        //   this, Android 14+/15+ rejects startForeground with
-        //   "Starting FGS with type mediaProjection ... requires CAPTURE_VIDEO_OUTPUT
-        //   or android:project_media" because the manifest declares
-        //   foregroundServiceType="mediaProjection|specialUse" and the system
-        //   defaults to the first declared type when none is passed.
+        // Capture is always MediaProjection: the FGS type must be
+        // FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION and requires a live projection
+        // token (handled below) plus the matching uses-permission in the manifest.
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (usesMediaProjectionVideo) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            } else {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            }
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         } else {
             0
         }
@@ -607,30 +570,26 @@ class LsfgForegroundService : Service() {
             intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
         }
         val targetPkg = intent.getStringExtra(EXTRA_TARGET_PACKAGE)
-        val initialFpsCounter = intent.getBooleanExtra(EXTRA_FPS_COUNTER, false)
-        if (usesMediaProjectionVideo && (data == null || resultCode == 0)) {
+        val initialHud = intent.getBooleanExtra(EXTRA_HUD, false)
+        if (data == null || resultCode == 0) {
             LsfgLog.e(TAG, "Missing MediaProjection result intent; stopping")
             stopSelf()
             return
         }
 
-        val proj = if (usesMediaProjectionVideo) {
-            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mpm.getMediaProjection(resultCode, data!!).also {
-                projection = it
-                // Android 14 (API 34) requires a non-null Handler for registerCallback on
-                // some OEMs (MediaTek/PowerVR devices observed revoking the projection
-                // token instantly when callback handler is null). Register BEFORE any
-                // VirtualDisplay is created so we also hear about system-initiated stops.
-                it.registerCallback(object : MediaProjection.Callback() {
-                    override fun onStop() {
-                        LsfgLog.i(TAG, "MediaProjection.onStop")
-                        stopSelf()
-                    }
-                }, mainHandler)
-            }
-        } else {
-            null
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val proj = mpm.getMediaProjection(resultCode, data).also {
+            projection = it
+            // Android 14 (API 34) requires a non-null Handler for registerCallback on
+            // some OEMs (MediaTek/PowerVR devices observed revoking the projection
+            // token instantly when callback handler is null). Register BEFORE any
+            // VirtualDisplay is created so we also hear about system-initiated stops.
+            it.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    LsfgLog.i(TAG, "MediaProjection.onStop")
+                    stopSelf()
+                }
+            }, mainHandler)
         }
 
         val ov = OverlayManager(this)
@@ -712,29 +671,11 @@ class LsfgForegroundService : Service() {
 
         // It owns the single launcher entry window and hides it while the session runs.
 
-        val cap = if (proj != null) CaptureEngine(this, proj) else null
+        val cap = CaptureEngine(this, proj)
         capture = cap
-        val shizukuCap = if (captureSource == CaptureSource.SHIZUKU) {
-            ShizukuCaptureEngine(this).also { engine ->
-                engine.setErrorListener { msg ->
-                    LsfgLog.w(TAG, msg)
-                    ov.updateStatus(msg)
-                }
-            }
-        } else null
-        shizukuCapture = shizukuCap
-        val rootCap = if (captureSource == CaptureSource.ROOT) {
-            RootCaptureEngine(this).also { engine ->
-                engine.setErrorListener { msg ->
-                    LsfgLog.w(TAG, msg)
-                    ov.updateStatus(msg)
-                }
-            }
-        } else null
-        rootCapture = rootCap
         // FPS/frame-graph telemetry is engine-independent (it only reads
         // NativeBridge's global render-loop counters), so it's wired once
-        // here instead of once per capture engine.
+        // here.
         CaptureMetrics.setFpsListener { captured, posted ->
             ov.updateFps(captured, posted)
             handleSessionStallWatchdog(captured)
@@ -759,8 +700,8 @@ class LsfgForegroundService : Service() {
                 .onFailure { LsfgLog.w(TAG, "initial setBypass failed", it) }
             ov.updateStatus("LSFG-Android+: bypass (raw capture)")
         }
-        // NOTE: deferring the initial FPS-counter wiring until AFTER ov.show() —
-        // setFpsVisible() is a no-op when ov.fpsView hasn't been created yet,
+        // NOTE: deferring the initial HUD wiring until AFTER ov.show() —
+        // setHudVisible() is a no-op when the HUD cluster hasn't been created yet,
         // and the view is only created inside show().
 
         ov.onSurfaceReady { surface, w, h ->
@@ -858,11 +799,9 @@ class LsfgForegroundService : Service() {
                 // the full display size (see the geometry-change check further down).
                 val (scaledW, scaledH) = scaledRenderSize(presentationW, presentationH, cfg.renderResolutionScale)
 
-                if (cap != null) {
-                    LsfgLog.i(TAG, "Starting ImageReader capture first to consume MediaProjection token")
-                    cap.setLsfgNativeInputEnabled(false)
-                    cap.setLsfgMode(scaledW, scaledH)
-                }
+                LsfgLog.i(TAG, "Starting ImageReader capture first to consume MediaProjection token")
+                cap.setLsfgNativeInputEnabled(false)
+                cap.setLsfgMode(scaledW, scaledH)
                 ov.updateStatus("LSFG-Android+: starting ${scaledW}×${scaledH} (input) → ${presentationW}×${presentationH} output…")
 
                 val cacheDir = File(filesDir, "spirv").absolutePath
@@ -898,51 +837,24 @@ class LsfgForegroundService : Service() {
                         activeBackendLabel = backendLabel(cfg, ai)
                         applySchedulingAndBacklogSettings()
                         pushStreamInfo()
-                        cap?.setLsfgNativeInputEnabled(true)
-                        if (isPrivilegedCapture) {
-                            // Frame-gen is active and its native context was sized to
-                            // scaledW/scaledH (see initContext above) — the privileged
-                            // video capture must deliver frames at that same size, not
-                            // the full display resolution.
-                            pendingPrivilegedVideoStart = ShizukuVideoStart(scaledW, scaledH, cfg)
-                        }
+                        cap.setLsfgNativeInputEnabled(true)
                         ov.updateStatus("LSFG-Android+: frame-gen active ${scaledW}×${scaledH} → ${presentationW}×${presentationH} ×${cfg.multiplier}")
                     }
                     rc > 0 -> {
                         LsfgLog.w(TAG, "initContext rc=$rc — framegen disabled, staying in mirror mode")
                         lsfgContextActive = true
-                        if (isPrivilegedCapture) {
-                            activeRenderW = 0
-                            activeRenderH = 0
-                            pendingPrivilegedVideoStart = ShizukuVideoStart(presentationW, presentationH, cfg)
-                            val label = if (captureSource == CaptureSource.ROOT) "Root" else "Shizuku"
-                            ov.updateStatus("LSFG-Android+: $label mirror ${presentationW}×${presentationH} (GPU lacks required Vulkan ext)")
-                        } else if (cap != null) {
-                            cap.setSurface(surface, presentationW, presentationH)
-                            activeRenderW = 0
-                            activeRenderH = 0
-                            // Retarget the bootstrap ImageReader capture to mirror
-                            // mode because framegen is unavailable.
-                            ov.updateStatus("LSFG-Android+: mirror ${presentationW}×${presentationH} (GPU lacks required Vulkan ext)")
-                        } else {
-                            activeRenderW = 0
-                            activeRenderH = 0
-                            ov.updateStatus("LSFG-Android+: frame-gen unavailable (init rc=$rc)")
-                        }
+                        cap.setSurface(surface, presentationW, presentationH)
+                        activeRenderW = 0
+                        activeRenderH = 0
+                        // Retarget the bootstrap ImageReader capture to mirror
+                        // mode because framegen is unavailable.
+                        ov.updateStatus("LSFG-Android+: mirror ${presentationW}×${presentationH} (GPU lacks required Vulkan ext)")
                     }
                     else -> {
                         LsfgLog.w(TAG, "initContext failed rc=$rc — staying in mirror mode")
                         activeRenderW = 0
                         activeRenderH = 0
-                        if (isPrivilegedCapture && rc > 0) {
-                            pendingPrivilegedVideoStart = ShizukuVideoStart(presentationW, presentationH, cfg)
-                            val label = if (captureSource == CaptureSource.ROOT) "Root" else "Shizuku"
-                            ov.updateStatus("LSFG-Android+: $label mirror active ${presentationW}×${presentationH} (init rc=$rc)")
-                        } else if (cap != null) {
-                            ov.updateStatus("LSFG-Android+: mirror active ${presentationW}×${presentationH} (init rc=$rc)")
-                        } else {
-                            ov.updateStatus("LSFG-Android+: init failed (rc=$rc)")
-                        }
+                        ov.updateStatus("LSFG-Android+: mirror active ${presentationW}×${presentationH} (init rc=$rc)")
                     }
                 }
                 // IMPORTANT: the Frame Generation service must never launch the target app.
@@ -955,14 +867,6 @@ class LsfgForegroundService : Service() {
                 LsfgLog.i(TAG, "Session ready; target launch is owned by Launcher: pkg=$pkg")
 
                 if (pkg != null) {
-                    pendingPrivilegedVideoStart?.let { start ->
-                        pendingPrivilegedVideoStart = null
-                        mainHandler.postDelayed({
-                            startShizukuVideo(shizukuCap, pkg, start.width, start.height, start.cfg)
-                            startRootVideo(rootCap, pkg, start.width, start.height, start.cfg)
-                        }, 500L)
-                    }
-
                     // The target app is already open. Only keep the LSFG overlay above it.
                     mainHandler.postDelayed({ overlay?.bringToFront() }, 150)
                     mainHandler.postDelayed({ overlay?.bringToFront() }, 600)
@@ -982,7 +886,7 @@ class LsfgForegroundService : Service() {
                 // the existing VirtualDisplay onto the new Surface. activeRenderW==0
                 // is our "running in mirror" sentinel — don't try to reinit the
                 // render loop, just keep the capture alive.
-                cap?.setSurface(surface, presentationW, presentationH)
+                cap.setSurface(surface, presentationW, presentationH)
             } else {
                 // We already passed the sameAsLast coalescing check above, so a
                 // genuinely new Surface or size reached us here (rotation, a
@@ -1021,7 +925,6 @@ class LsfgForegroundService : Service() {
         } else {
             ov.show()
         }
-        ov.showLoading("Loading…")
 
         // Now that ov.show() has actually created the FPS TextView, we can safely
         // make the UI visible. The actual counter (second VirtualDisplay) is
@@ -1029,39 +932,25 @@ class LsfgForegroundService : Service() {
         // PowerVR the system revokes MediaProjection if a second VirtualDisplay
         // is created while the first token is still unconsumed.
         //
-        // Keep the FPS counter visible when the user requested it so the
-        // overlay stays useful without the old benchmark-only path.
-        val effectiveFpsCounter = initialFpsCounter
-        if (effectiveFpsCounter) {
-            ov.setFpsVisible(true)
+        // HUD readout line (CPU GPU RAM FPS) and the frame graph have separate switches.
+        val effectiveHud = initialHud
+        // Always (re)set, so a flag left over from a previous session can't leak in.
+        hudStatsEnabled = effectiveHud
+        if (effectiveHud) {
+            ov.setHudVisible(true)
+            startStatsPollingIfNeeded()
         }
-        // The stall watchdog reads its samples off the same poller as the visible
-        // HUD counter, so keep the poller running whenever the watchdog is armed —
-        // even if the user hasn't turned the on-screen FPS readout on.
-        pendingFpsCounter = effectiveFpsCounter || sessionStallTimeoutSec > 0
-
-        // Frame pacing graph is purely a diagnostic overlay — no intent extra needed,
-        // read the persisted pref directly so it restores across service restarts.
+        // Frame pacing graph — read the persisted pref directly so it restores across
+        // service restarts, same as before it got its own switch.
         val initialFrameGraph = LsfgPreferences(this).load().frameGraphEnabled
         if (initialFrameGraph) {
             ov.setFrameGraphVisible(true)
             CaptureMetrics.startFrameGraph()
         }
-
-        // HUD CPU/GPU/RAM readout — same persisted-pref restore pattern as the
-        // frame pacing graph above, but driven by its own poll timer instead of
-        // a capture-engine listener.
-        val statsPrefs = LsfgPreferences(this).load()
-        val initialCpuStat = statsPrefs.cpuStatEnabled
-        val initialGpuStat = statsPrefs.gpuStatEnabled
-        val initialRamStat = statsPrefs.ramStatEnabled
-        cpuStatEnabled = initialCpuStat
-        gpuStatEnabled = initialGpuStat
-        ramStatEnabled = initialRamStat
-        if (statsAnyEnabled()) {
-            ov.setStatsVisible(true)
-            startStatsPollingIfNeeded()
-        }
+        // The stall watchdog reads its samples off the same poller as the visible
+        // HUD counter, so keep the poller running whenever the watchdog is armed —
+        // even if the user hasn't turned the HUD on.
+        pendingFpsCounter = effectiveHud || sessionStallTimeoutSec > 0
 
         // The main overlay and drawer both stay in TYPE_APPLICATION_OVERLAY so
         // the drawer/icon remains visible above the full-screen output surface.
@@ -1093,18 +982,22 @@ class LsfgForegroundService : Service() {
             stopSelf()
         }
         dr.setDisplayProfileActive(sessionDisplayApplied)
-        dr.setFpsCounterListener { enabled ->
-            LsfgLog.i(TAG, "fpsCounter=$enabled")
+        dr.setHudListener { enabled ->
+            LsfgLog.i(TAG, "hud=$enabled")
+            hudStatsEnabled = enabled
             if (enabled) {
                 CaptureMetrics.startFpsCounter()
-                overlay?.setFpsVisible(true)
+                overlay?.setHudVisible(true)
+                startStatsPollingIfNeeded()
             } else {
-                overlay?.setFpsVisible(false)
-                // Leave the poller running if the stall watchdog still needs its
+                overlay?.setHudVisible(false)
+                // Leave the fps poller running if the stall watchdog still needs its
                 // samples — only stop it when nothing is consuming them anymore.
                 if (sessionStallTimeoutSec <= 0) {
                     CaptureMetrics.stopFpsCounter()
                 }
+                statsPollRunnable?.let { mainHandler.removeCallbacks(it) }
+                statsPollRunnable = null
             }
         }
         dr.setFrameGraphListener { enabled ->
@@ -1117,48 +1010,12 @@ class LsfgForegroundService : Service() {
                 overlay?.setFrameGraphVisible(false)
             }
         }
-        dr.setCpuStatListener { enabled ->
-            LsfgLog.i(TAG, "cpuStat=$enabled")
-            cpuStatEnabled = enabled
-            if (enabled) {
-                overlay?.setStatsVisible(true)
-                startStatsPollingIfNeeded()
-            } else {
-                stopStatsPollingIfIdle()
-                overlay?.setStatsVisible(statsAnyEnabled())
-            }
-        }
-        dr.setGpuStatListener { enabled ->
-            LsfgLog.i(TAG, "gpuStat=$enabled")
-            gpuStatEnabled = enabled
-            if (enabled) {
-                overlay?.setStatsVisible(true)
-                startStatsPollingIfNeeded()
-            } else {
-                stopStatsPollingIfIdle()
-                overlay?.setStatsVisible(statsAnyEnabled())
-            }
-        }
-        dr.setRamStatListener { enabled ->
-            LsfgLog.i(TAG, "ramStat=$enabled")
-            ramStatEnabled = enabled
-            if (enabled) {
-                overlay?.setStatsVisible(true)
-                startStatsPollingIfNeeded()
-            } else {
-                stopStatsPollingIfIdle()
-                overlay?.setStatsVisible(statsAnyEnabled())
-            }
-        }
         dr.setHudPositionListener { unlocked ->
             LsfgLog.i(TAG, "hudPositionUnlocked=$unlocked")
             overlay?.setHudPositionUnlocked(unlocked)
         }
-        dr.setInitialFpsCounterState(effectiveFpsCounter)
+        dr.setInitialHudState(effectiveHud)
         dr.setInitialFrameGraphState(initialFrameGraph)
-        dr.setInitialCpuStatState(initialCpuStat)
-        dr.setInitialGpuStatState(initialGpuStat)
-        dr.setInitialRamStatState(initialRamStat)
         dr.setInitialHudPositionUnlockedState(LsfgPreferences(this).load().hudPositionUnlocked)
         dr.setLiveParamsListener {
             reinitLsfgContext()
@@ -1564,10 +1421,6 @@ class LsfgForegroundService : Service() {
                     // started but "Render loop shut down" never came.
                     runCatching { cap?.pauseLsfgInput() }
                         .onFailure { LsfgLog.w(TAG, "pauseLsfgInput failed", it) }
-                    runCatching { shizukuCapture?.pauseCapture() }
-                        .onFailure { LsfgLog.w(TAG, "pause Shizuku capture failed", it) }
-                    runCatching { rootCapture?.pauseCapture() }
-                        .onFailure { LsfgLog.w(TAG, "pause Root capture failed", it) }
                     runCatching { NativeBridge.destroyContext() }
                     lsfgContextActive = false
                 }
@@ -1635,9 +1488,6 @@ class LsfgForegroundService : Service() {
                         applySchedulingAndBacklogSettings()
                         cap?.setLsfgMode(scaledW, scaledH)
                         cap?.setLsfgNativeInputEnabled(true)
-                        val reinitTarget = targetPkgPending ?: activeTargetPackage
-                        startShizukuVideo(shizukuCapture, reinitTarget, scaledW, scaledH, cfg)
-                        startRootVideo(rootCapture, reinitTarget, scaledW, scaledH, cfg)
                         mainHandler.post {
                             ov.updateStatus("LSFG-Android+: ${lastSurfaceW}×${lastSurfaceH} ×${cfg.multiplier} flow=${"%.2f".format(cfg.flowScale)}")
                             pushStreamInfo()
@@ -1662,13 +1512,8 @@ class LsfgForegroundService : Service() {
                         activeRenderW = 0
                         activeRenderH = 0
                         if (surface != null) cap?.setSurface(surface, inputBaseW, inputBaseH)
-                        val reinitTarget = targetPkgPending ?: activeTargetPackage
-                        startShizukuVideo(shizukuCapture, reinitTarget, inputBaseW, inputBaseH, cfg)
-                        startRootVideo(rootCapture, reinitTarget, inputBaseW, inputBaseH, cfg)
                         mainHandler.post {
-                            if ((shizukuCapture != null || rootCapture != null) && cap != null) {
-                                ov.updateStatus("LSFG-Android+: privileged capture unavailable for mirror fallback (frame-gen unavailable)")
-                            } else if (cap != null) {
+                            if (cap != null) {
                                 ov.updateStatus("LSFG-Android+: mirror ${width}×${height} (GPU lacks required Vulkan ext)")
                             } else {
                                 ov.updateStatus("LSFG-Android+: frame-gen unavailable (init rc=$rc)")
@@ -1690,34 +1535,6 @@ class LsfgForegroundService : Service() {
             }
         }.start()
     }
-
-    private fun startShizukuVideo(
-        engine: ShizukuCaptureEngine?,
-        targetPackage: String?,
-        width: Int,
-        height: Int,
-        cfg: com.firstt175.deepdrop.prefs.LsfgConfig,
-    ) {
-        if (engine == null || targetPackage == null) return
-        engine.startCapture(targetPackage, width, height, UNCAPPED_FPS)
-    }
-
-    private fun startRootVideo(
-        engine: RootCaptureEngine?,
-        targetPackage: String?,
-        width: Int,
-        height: Int,
-        cfg: com.firstt175.deepdrop.prefs.LsfgConfig,
-    ) {
-        if (engine == null || targetPackage == null) return
-        engine.startCapture(targetPackage, width, height, UNCAPPED_FPS)
-    }
-
-    private data class ShizukuVideoStart(
-        val width: Int,
-        val height: Int,
-        val cfg: com.firstt175.deepdrop.prefs.LsfgConfig,
-    )
 
     private fun ensureChannel() {
         val mgr = getSystemService(NotificationManager::class.java)
@@ -1749,12 +1566,6 @@ class LsfgForegroundService : Service() {
 
     companion object {
         private const val TAG = "LsfgFGS"
-        // Capture engines take an int fps ceiling over IPC (Root/Shizuku AIDL
-        // interface); passing Int.MAX_VALUE means "no cap" now that the
-        // frame-rate limiter has been removed. The receiving services no
-        // longer throttle on this value (see RootCaptureService /
-        // ShizukuCaptureUserService).
-        private const val UNCAPPED_FPS = Int.MAX_VALUE
         private const val CHANNEL_ID = "lsfg_session"
         private const val NOTIF_ID = 1001
         // HUD CPU/GPU/RAM readout poll cadence — cheap reads, but no need to
@@ -1772,13 +1583,6 @@ class LsfgForegroundService : Service() {
         @Volatile
         private var instance: LsfgForegroundService? = null
 
-        /** Applies a drawer-edge change to the active in-game drawer immediately. */
-        fun updateDrawerEdge(edge: com.firstt175.deepdrop.prefs.DrawerEdge) {
-            instance?.let { service ->
-                service.mainHandler.post { service.drawer?.setDrawerEdge(edge) }
-            }
-        }
-
         /** Called by [com.firstt175.deepdrop.ui.MicPermissionRequestActivity] once
          *  the RECORD_AUDIO prompt is answered. No-op if the service isn't running
          *  (e.g. the user backgrounded the app while the prompt was up). */
@@ -1792,8 +1596,7 @@ class LsfgForegroundService : Service() {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_TARGET_PACKAGE = "target_package"
-        const val EXTRA_FPS_COUNTER = "fps_counter"
-        const val EXTRA_CAPTURE_SOURCE = "capture_source"
+        const val EXTRA_HUD = "hud"
 
         fun buildShowDrawerIntent(
             ctx: Context,
@@ -1807,35 +1610,13 @@ class LsfgForegroundService : Service() {
             resultCode: Int,
             resultData: Intent,
             targetPackage: String?,
-            fpsCounter: Boolean,
-            captureSource: CaptureSource = CaptureSource.MEDIA_PROJECTION,
+            hudEnabled: Boolean,
         ): Intent = Intent(ctx, LsfgForegroundService::class.java)
             .setAction(ACTION_START)
             .putExtra(EXTRA_RESULT_CODE, resultCode)
             .putExtra(EXTRA_RESULT_DATA, resultData)
             .putExtra(EXTRA_TARGET_PACKAGE, targetPackage)
-            .putExtra(EXTRA_FPS_COUNTER, fpsCounter)
-            .putExtra(EXTRA_CAPTURE_SOURCE, captureSource.prefValue)
-
-        fun buildShizukuStartIntent(
-            ctx: Context,
-            targetPackage: String?,
-            fpsCounter: Boolean,
-        ): Intent = Intent(ctx, LsfgForegroundService::class.java)
-            .setAction(ACTION_START)
-            .putExtra(EXTRA_TARGET_PACKAGE, targetPackage)
-            .putExtra(EXTRA_FPS_COUNTER, fpsCounter)
-            .putExtra(EXTRA_CAPTURE_SOURCE, CaptureSource.SHIZUKU.prefValue)
-
-        fun buildRootStartIntent(
-            ctx: Context,
-            targetPackage: String?,
-            fpsCounter: Boolean,
-        ): Intent = Intent(ctx, LsfgForegroundService::class.java)
-            .setAction(ACTION_START)
-            .putExtra(EXTRA_TARGET_PACKAGE, targetPackage)
-            .putExtra(EXTRA_FPS_COUNTER, fpsCounter)
-            .putExtra(EXTRA_CAPTURE_SOURCE, CaptureSource.ROOT.prefValue)
+            .putExtra(EXTRA_HUD, hudEnabled)
 
         fun stop(ctx: Context) {
             ctx.startService(

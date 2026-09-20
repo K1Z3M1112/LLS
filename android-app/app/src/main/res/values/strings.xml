@@ -35,18 +35,6 @@
 
     <!-- Section eyebrows -->
     <string name="section_frame_generation">Frame generation</string>
-    <string name="section_overlay_handle">Overlay handle</string>
-    <string name="section_hud">HUD</string>
-    <string name="section_trusted_overlay">Touch pass-through</string>
-    <string name="param_trusted_overlay">Trusted overlay (Accessibility)</string>
-    <string name="param_trusted_overlay_desc">Hosts the overlay as a trusted accessibility surface so taps reach the app underneath on strict devices (e.g. Orange Pi 5 Ultra) where they would otherwise be blocked. Trade-off: while a session is running the overlay covers the status bar and navigation bar — you cannot pull down notifications or tap home/back. Leave OFF if your device passes taps already; turn ON only when you cannot tap through. Requires the LSFG-Android+ accessibility service to be enabled.</string>
-    <string name="section_capture_mode">Capture mode</string>
-    <string name="capture_mode_mediaprojection">MediaProjection</string>
-    <string name="capture_mode_shizuku">Shizuku capture</string>
-    <string name="capture_mode_root">Root capture</string>
-    <string name="param_frame_graph">Frame pacing graph</string>
-    <string name="param_frame_graph_desc">Show a live plot of generated frame intervals in the overlay. Useful for diagnosing stutter.</string>
-
     <string name="dll_status_none">No Lossless.dll selected yet.</string>
     <string name="dll_pick_button">Select Lossless.dll</string>
     <string name="dll_reextract_button">Re-extract shaders</string>
@@ -69,13 +57,6 @@
     <string name="param_hdr_desc">Enable only if your device and game output HDR.</string>
     <string name="param_framegen_fp16">FP16 frame-gen shaders</string>
     <string name="param_framegen_fp16_desc">Use the half-precision shader variants pre-compiled inside Lossless.dll instead of the full-precision FP32 set. Reduces GPU load and memory bandwidth. Quality is virtually identical; falls back to FP32 automatically if anything goes wrong.</string>
-    <string name="param_fps_counter">FPS counter on overlay</string>
-    <string name="param_fps_counter_desc">Show a small FPS readout in the top-left of the overlay. MediaProjection counts visible capture frames; Shizuku capture counts privileged UID-filtered target frames.</string>
-    <string name="param_drawer_edge">Drawer handle position</string>
-    <string name="drawer_edge_left">Left</string>
-    <string name="drawer_edge_right">Right</string>
-    <string name="drawer_edge_top">Top</string>
-    <string name="drawer_edge_bottom">Bottom</string>
 
 
     <string name="language_menu_item">Language</string>
@@ -171,7 +152,7 @@
     <string name="settings_games">Games</string>
     <string name="settings_system">System</string>
     <string name="nav_framegen_pacing_desc">Frame generation, FPS and pacing</string>
-    <string name="nav_overlay_display_desc">Capture, HUD and overlay position</string>
+    <string name="nav_overlay_display_desc">HUD, present mode, image enhancement and sound</string>
     <string name="nav_setup">Setup</string>
     <string name="nav_setup_desc">Permissions and system preparation</string>
     <string name="nav_profile_desc">Device information and diagnostics</string>
@@ -193,16 +174,6 @@
     <string name="appearance_compact">Compact layout</string>
     <string name="appearance_compact_desc">Reduce spacing for smaller screens</string>
     <string name="appearance_apply">Apply appearance</string>
-    <string name="appearance_startup">Startup</string>
-    <string name="appearance_loading_screen">Loading screen</string>
-    <string name="appearance_loading_screen_desc">Show a short animation while the app starts up</string>
-    <string name="warp_loading_title">Preparing session…</string>
-    <string name="loading_style_warp">Warp</string>
-    <string name="loading_style_pulse">Pulse</string>
-    <string name="loading_style_orbit">Orbit</string>
-    <string name="loading_style_wave">Wave</string>
-    <string name="loading_style_minimal">Minimal</string>
-    <string name="warp_launching_game">Launching %1$s…</string>
 
     <string name="home_launcher">Game Launcher</string>
     <string name="home_my_games">My Games</string>
@@ -245,7 +216,7 @@
     <string name="action_expand">Expand</string>
     <string name="action_collapse">Collapse</string>
 
-    <!-- First-launch disclosure screen, shown once before the loading screen -->
+    <!-- First-launch disclosure screen, shown once before the home screen -->
     <string name="disclosure_title">Before you start</string>
     <string name="disclosure_subtitle">DeepDrop needs a few device permissions to generate frames over your games. Here\'s what each one is for — you can review or change any of them later from Settings.</string>
     <string name="disclosure_item_overlay_title">Display over other apps</string>
