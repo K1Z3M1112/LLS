@@ -82,8 +82,7 @@ Java_com_firstt175_deepdrop_session_NativeBridge_initContext(
         jboolean performance, jboolean hdr,
         jboolean framegenFp16,
         jboolean aiBackend, jstring aiModelDir,
-        jint aiEngine,
-        jboolean poolMemory, jboolean aliasScratch) {
+        jint aiEngine) {
     const std::string cache = jstring_to_std(env, cacheDir);
     if (cache.empty() || width <= 0 || height <= 0) {
         return lsfg_android::kErrDllUnreadable;
@@ -114,8 +113,6 @@ Java_com_firstt175_deepdrop_session_NativeBridge_initContext(
         .aiBackend = wantAi,
         .aiModelDir = jstring_to_std(env, aiModelDir),
         .aiEngine = static_cast<int>(aiEngine),
-        .poolMemory = poolMemory == JNI_TRUE,
-        .aliasScratch = aliasScratch == JNI_TRUE,
     };
     return lsfg_android::initRenderLoop(cache.c_str(), cfg);
 }
@@ -435,7 +432,6 @@ Java_com_firstt175_deepdrop_session_NativeBridge_setPresentMode(
     lsfg_android::setPresentMode(static_cast<int32_t>(mode));
 }
 
-
 extern "C" JNIEXPORT void JNICALL
 Java_com_firstt175_deepdrop_session_NativeBridge_setGenerationDeadlineMs(
         JNIEnv * /*env*/, jobject /*thiz*/, jint deadlineMs) {
@@ -593,6 +589,69 @@ Java_com_firstt175_deepdrop_session_NativeBridge_aiInterpolatePreview(
 #else
     (void) env; (void) frameA; (void) frameC; (void) width; (void) height;
     (void) outFrame; (void) outIndex; (void) multiplier; (void) flowScale; (void) engine;
+    return -1; // lsfg_android::kNcnnErrNotBuilt
+#endif
+}
+
+// AI-FRAMEGEN-EDITOR --------------------------------------------------------
+// Batch variant of aiInterpolatePreview used by the video editor's offline AI
+// frame generation. One model run yields ALL (multiplier - 1) in-between frames
+// between frameA and frameC, written back-to-back into `outFrames`
+// (frame k lives at byte offset (k - 1) * width * height * 4). The preview call
+// above computes the same frames but copies out only one, which would make
+// 3x/4x cost (multiplier - 1) times more model runs than necessary.
+// All three buffers must be direct ByteBuffers; outFrames needs capacity for
+// (multiplier - 1) frames. `engine`: 0 = RIFE, 1 = IFRNet, same as the preview call.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_firstt175_deepdrop_session_NativeBridge_aiInterpolateBatch(
+        JNIEnv *env, jobject /*thiz*/,
+        jobject frameA, jobject frameC, jint width, jint height,
+        jobject outFrames, jint multiplier, jfloat flowScale, jint engine) {
+#ifdef LSFG_HAVE_NCNN
+    const bool useIfrnet = (engine == 1);
+    if (useIfrnet) {
+        if (g_ifrnetInterpolator == nullptr || !g_ifrnetInterpolator->isLoaded()) {
+            return lsfg_android::kNcnnErrNotLoaded;
+        }
+    } else {
+        if (g_ncnnInterpolator == nullptr || !g_ncnnInterpolator->isLoaded()) {
+            return lsfg_android::kNcnnErrNotLoaded;
+        }
+    }
+    if (width <= 0 || height <= 0 || multiplier < 2 || multiplier > 8) {
+        return lsfg_android::kNcnnErrBadArgs;
+    }
+    auto *a = static_cast<uint8_t *>(env->GetDirectBufferAddress(frameA));
+    auto *c = static_cast<uint8_t *>(env->GetDirectBufferAddress(frameC));
+    auto *out = static_cast<uint8_t *>(env->GetDirectBufferAddress(outFrames));
+    if (a == nullptr || c == nullptr || out == nullptr) {
+        return lsfg_android::kNcnnErrBadArgs;
+    }
+
+    const size_t frameBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+    const jlong capA = env->GetDirectBufferCapacity(frameA);
+    const jlong capC = env->GetDirectBufferCapacity(frameC);
+    const jlong capOut = env->GetDirectBufferCapacity(outFrames);
+    if (capA < static_cast<jlong>(frameBytes) || capC < static_cast<jlong>(frameBytes) ||
+        capOut < static_cast<jlong>(frameBytes * static_cast<size_t>(multiplier - 1))) {
+        return lsfg_android::kNcnnErrBadArgs;
+    }
+
+    std::vector<uint8_t *> outPtrs(static_cast<size_t>(multiplier - 1));
+    for (int i = 0; i < multiplier - 1; ++i) {
+        outPtrs[static_cast<size_t>(i)] = out + static_cast<size_t>(i) * frameBytes;
+    }
+
+    return useIfrnet
+        ? g_ifrnetInterpolator->interpolate(
+              a, c, static_cast<int>(width), static_cast<int>(height),
+              outPtrs.data(), static_cast<int>(multiplier), static_cast<float>(flowScale))
+        : g_ncnnInterpolator->interpolate(
+              a, c, static_cast<int>(width), static_cast<int>(height),
+              outPtrs.data(), static_cast<int>(multiplier), static_cast<float>(flowScale));
+#else
+    (void) env; (void) frameA; (void) frameC; (void) width; (void) height;
+    (void) outFrames; (void) multiplier; (void) flowScale; (void) engine;
     return -1; // lsfg_android::kNcnnErrNotBuilt
 #endif
 }

@@ -167,8 +167,6 @@ fun StatusPill(
     }
 }
 
-
-
 @Composable
 fun IconBadge(
     icon: ImageVector,

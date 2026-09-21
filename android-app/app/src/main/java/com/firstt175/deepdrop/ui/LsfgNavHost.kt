@@ -12,13 +12,16 @@ import com.firstt175.deepdrop.ui.screens.OverlayDisplayScreen
 import com.firstt175.deepdrop.ui.screens.SettingsHubScreen
 import com.firstt175.deepdrop.ui.screens.SetupScreen
 import com.firstt175.deepdrop.ui.screens.RecordingGalleryScreen
+import com.firstt175.deepdrop.ui.screens.VideoEditScreen
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import com.firstt175.deepdrop.prefs.FirstRunPrefs
 
 object Routes {
@@ -34,6 +37,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val APPEARANCE = "appearance"
     const val RECORDINGS = "recordings"
+    const val VIDEO_EDIT = "video_edit"
 }
 
 @Composable
@@ -66,5 +70,12 @@ fun LsfgNavHost(navController: NavHostController) {
         composable(Routes.SETTINGS) { SettingsHubScreen(navController) }
         composable(Routes.APPEARANCE) { AppearanceSettingsScreen(navController) }
         composable(Routes.RECORDINGS) { RecordingGalleryScreen(navController) }
+        composable(
+            "${Routes.VIDEO_EDIT}/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.LongType }),
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getLong("id") ?: -1L
+            VideoEditScreen(navController, id)
+        }
     }
 }

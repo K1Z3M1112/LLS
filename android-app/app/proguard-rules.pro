@@ -43,3 +43,13 @@
 
 # Stop R8 from stripping the line numbers we use to map native crash reports.
 -renamesourcefileattribute SourceFile
+
+# Video editor preview: ExoPlayer's video-effects path (CompositingVideoSinkProvider) looks up
+# ScaleAndRotateTransformation.Builder by name via reflection whenever a clip carries a rotation.
+# Media3 1.4.1 ships keep rules for its other two effect lookups but not this one, so without this
+# R8 renames it and previewing a rotated (e.g. portrait) recording crashes in release builds.
+-keep class androidx.media3.effect.ScaleAndRotateTransformation$Builder {
+    <init>();
+    androidx.media3.effect.ScaleAndRotateTransformation$Builder setRotationDegrees(float);
+    androidx.media3.effect.ScaleAndRotateTransformation build();
+}

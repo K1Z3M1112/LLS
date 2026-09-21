@@ -59,7 +59,6 @@
     <string name="param_framegen_fp16">เชเดอร์สร้างเฟรมแบบ FP16</string>
     <string name="param_framegen_fp16_desc">ใช้เชเดอร์ความละเอียดครึ่งหนึ่งที่คอมไพล์ไว้ล่วงหน้าใน Lossless.dll แทนชุด FP32 ความละเอียดเต็ม ลดภาระ GPU และแบนด์วิดท์หน่วยความจำ คุณภาพแทบไม่ต่างกัน หากเกิดปัญหาจะสลับกลับไปใช้ FP32 โดยอัตโนมัติ</string>
 
-
     <string name="language_menu_item">ภาษา</string>
     <string name="language_system">ค่าเริ่มต้นของระบบ</string>
     <string name="language_english">English</string>
@@ -74,8 +73,6 @@
     <string name="credits_build_unofficial">บิลด์นี้ไม่ได้เซ็นชื่อโดยผู้พัฒนาต้นฉบับ หากไม่แน่ใจว่าได้ไฟล์นี้มาจากไหน แนะนำให้โหลดใหม่จากลิงก์ทางการด้านบน</string>
 
     <string name="perm_capture_denied">การจับภาพหน้าจอถูกปฏิเสธ LSFG-Android+ ไม่สามารถทำงานได้หากไม่มีสิทธิ์นี้</string>
-
-
 
     <string name="crash_dialog_dismiss">ปิด</string>
 
@@ -147,7 +144,6 @@
     <string name="profile_display_refresh">อัตรารีเฟรช</string>
     <string name="profile_display_density">ความหนาแน่นจุดภาพ</string>
 
-
     <string name="settings_title">การตั้งค่า</string>
     <string name="settings_general">ทั่วไป</string>
     <string name="settings_games">เกม</string>
@@ -187,6 +183,7 @@
     <string name="home_search">ค้นหาเกมหรือแอป...</string>
     <string name="home_add_game">เพิ่มเกม</string>
     <string name="home_profile">โปรไฟล์</string>
+    <string name="home_gallery">แกลเลอรี</string>
     <string name="home_no_games">ไม่พบแอปที่สามารถเพิ่มเป็นเกมได้</string>
     <string name="home_add">เพิ่ม</string>
     <string name="home_cancel">ยกเลิก</string>
