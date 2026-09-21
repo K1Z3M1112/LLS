@@ -14,7 +14,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.firstt175.deepdrop.R
 import com.firstt175.deepdrop.prefs.AppLanguagePrefs
-import com.firstt175.deepdrop.prefs.CaptureSource
 import com.firstt175.deepdrop.prefs.LsfgPreferences
 import com.firstt175.deepdrop.session.service.LsfgForegroundService
 /**
@@ -61,8 +60,7 @@ class ProjectionRequestActivity : ComponentActivity() {
             resultCode = result.resultCode,
             resultData = data,
             targetPackage = pkg,
-            fpsCounter = prefs.fpsCounterEnabled,
-            captureSource = prefs.captureSource,
+            hudEnabled = prefs.hudEnabled,
         )
         ContextCompat.startForegroundService(this, intent)
         finish()
@@ -73,25 +71,6 @@ class ProjectionRequestActivity : ComponentActivity() {
         targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE)
         if (targetPackage == null) {
             Log.w(TAG, "No target package provided — finishing")
-            finish()
-            return
-        }
-        val prefs = LsfgPreferences(this).load()
-        if (prefs.captureSource == CaptureSource.SHIZUKU || prefs.captureSource == CaptureSource.ROOT) {
-            val intent = if (prefs.captureSource == CaptureSource.ROOT) {
-                LsfgForegroundService.buildRootStartIntent(
-                    ctx = this,
-                    targetPackage = targetPackage,
-                    fpsCounter = prefs.fpsCounterEnabled,
-                )
-            } else {
-                LsfgForegroundService.buildShizukuStartIntent(
-                    ctx = this,
-                    targetPackage = targetPackage,
-                    fpsCounter = prefs.fpsCounterEnabled,
-                )
-            }
-            ContextCompat.startForegroundService(this, intent)
             finish()
             return
         }

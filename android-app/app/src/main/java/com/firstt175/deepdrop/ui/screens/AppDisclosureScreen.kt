@@ -39,8 +39,8 @@ import androidx.compose.ui.platform.LocalContext
 
 /**
  * One-time disclosure shown before anything else the very first time the app
- * runs — before the warp [Routes.LOADING] screen and before any system
- * permission dialog fires. Plain-language summary of what DeepDrop asks for
+ * runs — before [Routes.HOME] and before any system permission dialog
+ * fires. Plain-language summary of what DeepDrop asks for
  * and why, so the user knows what they're agreeing to before the first
  * permission prompt appears mid-flow.
  *
@@ -120,7 +120,7 @@ fun AppDisclosureScreen(nav: NavHostController) {
             text = stringResource(R.string.disclosure_cta),
             onClick = {
                 FirstRunPrefs.setDisclosureAcknowledged(ctx)
-                nav.navigate(Routes.LOADING) {
+                nav.navigate(Routes.HOME) {
                     popUpTo(Routes.DISCLOSURE) { inclusive = true }
                 }
             },
