@@ -95,7 +95,6 @@ public:
     void unload();
     bool isLoaded() const;
 
-
     // frameA/frameC: interleaved RGBA8 buffers, width*height*4 bytes each —
     // the two real captured frames to interpolate between.
     // outFrames: array of (multiplier - 1) pointers, each already allocated

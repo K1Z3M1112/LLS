@@ -35,7 +35,6 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import com.firstt175.deepdrop.R
-import com.firstt175.deepdrop.prefs.DrawerEdge
 import com.firstt175.deepdrop.prefs.FramegenBackend
 import com.firstt175.deepdrop.prefs.LsfgPreferences
 import java.io.File
@@ -72,24 +71,12 @@ class SettingsDrawerOverlay(
         fun onRestartSession()
     }
 
-    fun interface FpsCounterListener {
-        fun onFpsCounterChanged(enabled: Boolean)
+    fun interface HudListener {
+        fun onHudChanged(enabled: Boolean)
     }
 
     fun interface FrameGraphListener {
         fun onFrameGraphChanged(enabled: Boolean)
-    }
-
-    fun interface CpuStatListener {
-        fun onCpuStatChanged(enabled: Boolean)
-    }
-
-    fun interface GpuStatListener {
-        fun onGpuStatChanged(enabled: Boolean)
-    }
-
-    fun interface RamStatListener {
-        fun onRamStatChanged(enabled: Boolean)
     }
 
     fun interface HudPositionListener {
@@ -115,19 +102,13 @@ class SettingsDrawerOverlay(
     private var bypassListener: BypassToggleListener? = null
     private var stopListener: StopOverlayListener? = null
     private var restartListener: RestartSessionListener? = null
-    private var fpsCounterListener: FpsCounterListener? = null
+    private var hudListener: HudListener? = null
     private var frameGraphListener: FrameGraphListener? = null
-    private var cpuStatListener: CpuStatListener? = null
-    private var gpuStatListener: GpuStatListener? = null
-    private var ramStatListener: RamStatListener? = null
     private var hudPositionListener: HudPositionListener? = null
     private var liveParamsListener: LiveParamsListener? = null
     private var recordingListener: RecordingListener? = null
-    private var initialFpsCounter: Boolean = false
+    private var initialHud: Boolean = false
     private var initialFrameGraph: Boolean = false
-    private var initialCpuStat: Boolean = false
-    private var initialGpuStat: Boolean = false
-    private var initialRamStat: Boolean = false
     private var initialHudPositionUnlocked: Boolean = false
     /** Set by [LsfgForegroundService] once it knows whether this session actually
      *  applied a resolution/DPI override — gates whether END SESSION asks the
@@ -202,7 +183,6 @@ class SettingsDrawerOverlay(
     private var expanded: Boolean = false
     private var dragActive: Boolean = false
     private var dragStartX: Float = 0f
-    private var dragStartY: Float = 0f
     private var dragStartProgress: Float = 0f
     private var settleAnimator: ValueAnimator? = null
     private var handlePulseAnimator: ValueAnimator? = null
@@ -211,30 +191,21 @@ class SettingsDrawerOverlay(
     private var handleWidthPx = 0
     private var handleHeightPx = 0
     private var panelWidthPx = 0
-    private var panelHeightPx = 0
     private var panelMarginPx = 0
     private var screenW = 0
     private var screenH = 0
-    private var drawerEdge: DrawerEdge = DrawerEdge.RIGHT
-
 
     fun setBypassListener(l: BypassToggleListener) { bypassListener = l }
     fun setStopOverlayListener(l: StopOverlayListener) { stopListener = l }
     fun setRestartSessionListener(l: RestartSessionListener) { restartListener = l }
-    fun setFpsCounterListener(l: FpsCounterListener) { fpsCounterListener = l }
+    fun setHudListener(l: HudListener) { hudListener = l }
     fun setFrameGraphListener(l: FrameGraphListener) { frameGraphListener = l }
-    fun setCpuStatListener(l: CpuStatListener) { cpuStatListener = l }
-    fun setGpuStatListener(l: GpuStatListener) { gpuStatListener = l }
-    fun setRamStatListener(l: RamStatListener) { ramStatListener = l }
     fun setHudPositionListener(l: HudPositionListener) { hudPositionListener = l }
     fun setLiveParamsListener(l: LiveParamsListener) { liveParamsListener = l }
     fun setRecordingListener(l: RecordingListener) { recordingListener = l }
 
-    fun setInitialFpsCounterState(enabled: Boolean) { initialFpsCounter = enabled }
+    fun setInitialHudState(enabled: Boolean) { initialHud = enabled }
     fun setInitialFrameGraphState(enabled: Boolean) { initialFrameGraph = enabled }
-    fun setInitialCpuStatState(enabled: Boolean) { initialCpuStat = enabled }
-    fun setInitialGpuStatState(enabled: Boolean) { initialGpuStat = enabled }
-    fun setInitialRamStatState(enabled: Boolean) { initialRamStat = enabled }
     fun setInitialHudPositionUnlockedState(enabled: Boolean) { initialHudPositionUnlocked = enabled }
     fun setDisplayProfileActive(active: Boolean) { displayProfileActive = active }
 
@@ -550,9 +521,8 @@ class SettingsDrawerOverlay(
         // Match OverlayManager's host choice — they MUST live in the same
         // layer family or the drawer disappears behind the capture overlay.
         // See OverlayManager.show() for the trusted-overlay rationale.
-        val prefs = LsfgPreferences(ctx).load()
         val a11y = LsfgAccessibilityService.instance
-        val useTrusted = prefs.trustedOverlay && a11y != null
+        val useTrusted = a11y != null
         val hostCtx: Context = if (useTrusted) a11y!! else ctx
         val wm = hostCtx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         hostWindowManager = wm
@@ -564,9 +534,7 @@ class SettingsDrawerOverlay(
         handleWidthPx = dp(5)
         handleHeightPx = dp(68)
         panelWidthPx = minOf(dp(430), (screenW * 0.92f).toInt())
-        panelHeightPx = minOf(dp(620), (screenH * 0.92f).toInt())
         panelMarginPx = dp(12)
-        drawerEdge = prefs.drawerEdge
 
         val layoutType = when {
             useTrusted -> WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
@@ -1401,45 +1369,21 @@ class SettingsDrawerOverlay(
             setPadding(0, dp(4), 0, dp(8))
         })
 
-
-
-        // ---- HUD & Overlay (FPS, frame graph, drawer edge) -----------------------------
+        // ---- HUD (readout switch + separate frame graph switch) ---------------------
         val hudSection = collapsibleSection(overlayPage, "HUD & OVERLAY")
         hudSection.addView(switchRow(
-            label = "FPS counter",
-            initial = initialFpsCounter,
+            label = "HUD (CPU / GPU / RAM / FPS)",
+            initial = initialHud,
         ) {
-            prefs.setFpsCounterEnabled(it)
-            fpsCounterListener?.onFpsCounterChanged(it)
+            prefs.setHudEnabled(it)
+            hudListener?.onHudChanged(it)
         })
         hudSection.addView(switchRow(
-            label = "Frame pacing graph",
+            label = "Frame graph",
             initial = initialFrameGraph,
         ) {
             prefs.setFrameGraphEnabled(it)
             frameGraphListener?.onFrameGraphChanged(it)
-        })
-        hudSection.addView(miniHeader("System stats"))
-        hudSection.addView(switchRow(
-            label = "CPU usage",
-            initial = initialCpuStat,
-        ) {
-            prefs.setCpuStatEnabled(it)
-            cpuStatListener?.onCpuStatChanged(it)
-        })
-        hudSection.addView(switchRow(
-            label = "GPU usage",
-            initial = initialGpuStat,
-        ) {
-            prefs.setGpuStatEnabled(it)
-            gpuStatListener?.onGpuStatChanged(it)
-        })
-        hudSection.addView(switchRow(
-            label = "RAM usage",
-            initial = initialRamStat,
-        ) {
-            prefs.setRamStatEnabled(it)
-            ramStatListener?.onRamStatChanged(it)
         })
         hudSection.addView(switchRow(
             label = "Unlock HUD position",
@@ -1447,10 +1391,6 @@ class SettingsDrawerOverlay(
         ) {
             prefs.setHudPositionUnlocked(it)
             hudPositionListener?.onHudPositionUnlocked(it)
-        })
-        hudSection.addView(miniHeader("Drawer handle"))
-        hudSection.addView(drawerEdgeChipRow(initial.drawerEdge) {
-            prefs.setDrawerEdge(it)
         })
         hudSection.addView(miniHeader("Diagnostics"))
         val viewLogBtn = Button(ctx).apply {
@@ -1713,7 +1653,6 @@ class SettingsDrawerOverlay(
                     // `edgeStripWidthPx` while only a tap is in flight avoids forcing the
                     // compositor to blend a full-screen overlay on top of the running game.
                     dragStartX = ev.rawX
-                    dragStartY = ev.rawY
                     dragStartProgress = progress
                     dragActive = false
                     true
@@ -1824,34 +1763,6 @@ class SettingsDrawerOverlay(
     }
 
     /** Re-reads display metrics and reapplies drawer layout after rotation/configuration changes. */
-    /** Updates the live drawer handle/panel edge without recreating the overlay. */
-    fun setDrawerEdge(edge: DrawerEdge) {
-        if (drawerEdge == edge) return
-        drawerEdge = edge
-        mainHandler.post {
-            val wm = hostWindowManager ?: return@post
-            val r = root ?: return@post
-            if (!r.isAttachedToWindow) return@post
-            settleAnimator?.cancel()
-            settleAnimator = null
-            val lp = params ?: return@post
-            if (expanded) {
-                panelContainer?.layoutParams = panelLayoutParams()
-                panelContainer?.let { applyPanelProgress(it, progress) }
-            } else {
-                lp.width = collapsedWindowWidth()
-                lp.height = collapsedWindowHeight()
-                lp.gravity = collapsedWindowGravity()
-                lp.x = 0
-                lp.y = 0
-                handleView?.layoutParams = handleLayoutParams()
-                runCatching { wm.updateViewLayout(r, lp) }
-                    .onFailure { Log.w(TAG, "setDrawerEdge updateViewLayout failed", it) }
-            }
-            handleView?.invalidate()
-        }
-    }
-
     fun onDisplayConfigurationChanged() {
         val r = root ?: return
         r.post {
@@ -1881,8 +1792,6 @@ class SettingsDrawerOverlay(
         // it's stable across rotations, but the screen-percentage clamps on
         // panel size are not.
         panelWidthPx = minOf(dp(430), (screenW * 0.92f).toInt())
-        panelHeightPx = minOf(dp(620), (screenH * 0.92f).toInt())
-
 
         // Rebuild panel layout params (size + gravity) on the new orientation.
         panelContainer?.let { pv ->
@@ -1920,7 +1829,6 @@ class SettingsDrawerOverlay(
         handlePulseAnimator = null
         handleView?.setGlow(1f)
     }
-
 
     private fun stopHandlePulse() {
         handlePulseAnimator?.cancel()
@@ -2467,67 +2375,6 @@ class SettingsDrawerOverlay(
         setPadding(0, dp(14), 0, dp(6))
     }
 
-    private fun <T> chipRow(
-        items: List<Pair<T, String>>,
-        initial: T,
-        onSelected: (T) -> Unit,
-    ): View {
-        val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(8))
-        }
-        val buttons = mutableListOf<Button>()
-        fun paint(selected: T) {
-            buttons.forEachIndexed { i, btn ->
-                val isSel = items[i].first == selected
-                btn.setTextColor(if (isSel) COLOR_PANEL_BG else COLOR_ON_SURFACE)
-                (btn.background as? GradientDrawable)?.setColor(
-                    if (isSel) COLOR_PRIMARY else COLOR_CHIP_BG,
-                )
-            }
-        }
-        items.forEach { (value, label) ->
-            val btn = Button(ctx).apply {
-                text = label
-                isAllCaps = false
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dp(3).toFloat()
-                }
-                setPadding(dp(4), dp(4), dp(4), dp(4))
-                stateListAnimator = null
-                setOnClickListener {
-                    onSelected(value)
-                    paint(value)
-                }
-            }
-            val lp = LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f,
-            ).apply {
-                leftMargin = if (buttons.isEmpty()) 0 else dp(6)
-            }
-            row.addView(btn, lp)
-            buttons += btn
-        }
-        paint(initial)
-        return row
-    }
-
-    private fun drawerEdgeChipRow(
-        initial: DrawerEdge,
-        onSelected: (DrawerEdge) -> Unit,
-    ): View {
-        val items = listOf(
-            DrawerEdge.LEFT to "Left",
-            DrawerEdge.RIGHT to "Right",
-            DrawerEdge.TOP to "Top",
-            DrawerEdge.BOTTOM to "Bottom",
-        )
-        return chipRow(items, initial, onSelected)
-    }
-
     private fun sliderRow(labelText: String, valueView: TextView): View {
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2614,73 +2461,35 @@ class SettingsDrawerOverlay(
         return (v * ctx.resources.displayMetrics.density).toInt()
     }
 
-    private fun isVerticalEdge(): Boolean =
-        drawerEdge == DrawerEdge.LEFT || drawerEdge == DrawerEdge.RIGHT
+    // The drawer handle and panel are locked to the right edge.
 
-    private fun collapsedWindowWidth(): Int =
-        if (isVerticalEdge()) edgeStripWidthPx else WindowManager.LayoutParams.MATCH_PARENT
+    private fun collapsedWindowWidth(): Int = edgeStripWidthPx
 
-    private fun collapsedWindowHeight(): Int =
-        if (isVerticalEdge()) WindowManager.LayoutParams.MATCH_PARENT else edgeStripWidthPx
+    private fun collapsedWindowHeight(): Int = WindowManager.LayoutParams.MATCH_PARENT
 
-    private fun collapsedWindowGravity(): Int = when (drawerEdge) {
-        DrawerEdge.LEFT -> Gravity.TOP or Gravity.START
-        DrawerEdge.RIGHT -> Gravity.TOP or Gravity.END
-        DrawerEdge.TOP -> Gravity.TOP or Gravity.START
-        DrawerEdge.BOTTOM -> Gravity.BOTTOM or Gravity.START
-    }
+    private fun collapsedWindowGravity(): Int = Gravity.TOP or Gravity.END
 
-    private fun panelTravelPx(): Int =
-        if (isVerticalEdge()) panelWidthPx.coerceAtLeast(1) else panelHeightPx.coerceAtLeast(1)
+    private fun panelTravelPx(): Int = panelWidthPx.coerceAtLeast(1)
 
     private fun panelLayoutParams(): FrameLayout.LayoutParams =
-        if (isVerticalEdge()) {
-            FrameLayout.LayoutParams(
-                panelWidthPx,
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                if (drawerEdge == DrawerEdge.LEFT) Gravity.START else Gravity.END,
-            )
-        } else {
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                panelHeightPx,
-                if (drawerEdge == DrawerEdge.TOP) Gravity.TOP else Gravity.BOTTOM,
-            )
-        }
+        FrameLayout.LayoutParams(
+            panelWidthPx,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            Gravity.END,
+        )
 
     private fun handleLayoutParams(): FrameLayout.LayoutParams =
-        if (isVerticalEdge()) {
-            FrameLayout.LayoutParams(
-                handleWidthPx + dp(8),
-                handleHeightPx,
-                Gravity.CENTER_VERTICAL or
-                    (if (drawerEdge == DrawerEdge.LEFT) Gravity.START else Gravity.END),
-            )
-        } else {
-            FrameLayout.LayoutParams(
-                handleHeightPx,
-                handleWidthPx + dp(8),
-                Gravity.CENTER_HORIZONTAL or
-                    (if (drawerEdge == DrawerEdge.TOP) Gravity.TOP else Gravity.BOTTOM),
-            )
-        }
+        FrameLayout.LayoutParams(
+            handleWidthPx + dp(8),
+            handleHeightPx,
+            Gravity.CENTER_VERTICAL or Gravity.END,
+        )
 
-    private fun dragDeltaTowardCenter(ev: MotionEvent): Float = when (drawerEdge) {
-        DrawerEdge.LEFT -> ev.rawX - dragStartX
-        DrawerEdge.RIGHT -> dragStartX - ev.rawX
-        DrawerEdge.TOP -> ev.rawY - dragStartY
-        DrawerEdge.BOTTOM -> dragStartY - ev.rawY
-    }
+    private fun dragDeltaTowardCenter(ev: MotionEvent): Float = dragStartX - ev.rawX
 
     private fun applyPanelProgress(panelView: View, p: Float) {
-        panelView.translationX = 0f
+        panelView.translationX = (1f - p) * panelWidthPx
         panelView.translationY = 0f
-        when (drawerEdge) {
-            DrawerEdge.LEFT -> panelView.translationX = -(1f - p) * panelWidthPx
-            DrawerEdge.RIGHT -> panelView.translationX = (1f - p) * panelWidthPx
-            DrawerEdge.TOP -> panelView.translationY = -(1f - p) * panelHeightPx
-            DrawerEdge.BOTTOM -> panelView.translationY = (1f - p) * panelHeightPx
-        }
     }
 
     // --- handle view -------------------------------------------------------------------
@@ -2699,39 +2508,16 @@ class SettingsDrawerOverlay(
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             super.onSizeChanged(w, h, oldw, oldh)
             // Build the gradient shader once per size change instead of every draw.
-            if (isVerticalEdge()) {
-                val pillWidth = handleWidthPx.toFloat()
-                val pillHeight = handleHeightPx.toFloat()
-                val right = if (drawerEdge == DrawerEdge.LEFT) {
-                    dp(4).toFloat() + pillWidth
-                } else {
-                    w.toFloat() - dp(4)
-                }
-                val left = right - pillWidth
-                val top = (h.toFloat() - pillHeight) / 2f
-                val bottom = top + pillHeight
-                shader = LinearGradient(
-                    left, top, left, bottom,
-                    COLOR_PRIMARY, COLOR_ACCENT_DEEP,
-                    Shader.TileMode.CLAMP,
-                )
-            } else {
-                val pillWidth = handleHeightPx.toFloat()
-                val pillHeight = handleWidthPx.toFloat()
-                val left = (w.toFloat() - pillWidth) / 2f
-                val right = left + pillWidth
-                val top = if (drawerEdge == DrawerEdge.TOP) {
-                    dp(4).toFloat()
-                } else {
-                    h.toFloat() - dp(4) - pillHeight
-                }
-                val bottom = top + pillHeight
-                shader = LinearGradient(
-                    left, top, right, top,
-                    COLOR_PRIMARY, COLOR_ACCENT_DEEP,
-                    Shader.TileMode.CLAMP,
-                )
-            }
+            val pillWidth = handleWidthPx.toFloat()
+            val pillHeight = handleHeightPx.toFloat()
+            val left = w.toFloat() - dp(4) - pillWidth
+            val top = (h.toFloat() - pillHeight) / 2f
+            val bottom = top + pillHeight
+            shader = LinearGradient(
+                left, top, left, bottom,
+                COLOR_PRIMARY, COLOR_ACCENT_DEEP,
+                Shader.TileMode.CLAMP,
+            )
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -2740,18 +2526,10 @@ class SettingsDrawerOverlay(
             pillPaint.alpha = (255 * glow).toInt().coerceIn(120, 255)
             val w = width.toFloat()
             val h = height.toFloat()
-            val pillWidth = if (isVerticalEdge()) handleWidthPx.toFloat() else handleHeightPx.toFloat()
-            val pillHeight = if (isVerticalEdge()) handleHeightPx.toFloat() else handleWidthPx.toFloat()
-            val left = when {
-                isVerticalEdge() && drawerEdge == DrawerEdge.LEFT -> dp(4).toFloat()
-                isVerticalEdge() -> w - dp(4) - pillWidth
-                else -> (w - pillWidth) / 2f
-            }
-            val top = when {
-                !isVerticalEdge() && drawerEdge == DrawerEdge.TOP -> dp(4).toFloat()
-                !isVerticalEdge() -> h - dp(4) - pillHeight
-                else -> (h - pillHeight) / 2f
-            }
+            val pillWidth = handleWidthPx.toFloat()
+            val pillHeight = handleHeightPx.toFloat()
+            val left = w - dp(4) - pillWidth
+            val top = (h - pillHeight) / 2f
             val right = left + pillWidth
             val bottom = top + pillHeight
             val radius = minOf(pillWidth, pillHeight) / 2f

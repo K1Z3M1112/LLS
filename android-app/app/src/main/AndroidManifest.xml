@@ -6,8 +6,8 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <!-- specialUse covers the Shizuku capture path: no MediaProjection token is
-         held, so requesting FGS type=mediaProjection on Android 14+/15+ throws
+    <!-- specialUse covers the idle drawer path: no MediaProjection token is
+         held yet, so requesting FGS type=mediaProjection on Android 14+/15+ throws
          SecurityException ("requires android:project_media"). The subtype is
          declared via the <property> element on the service below. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -103,14 +103,6 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="lsfg_shizuku_capture_pacing" />
         </service>
-
-        <!-- Extends com.topjohnwu.superuser.ipc.RootService (libsu), which itself
-             extends android.app.Service. Lint cannot resolve the parent across
-             the AAR boundary and flags Instantiatable; suppress the false positive. -->
-        <service
-            android:name=".session.capture.RootCaptureService"
-            android:exported="false"
-            tools:ignore="Instantiatable" />
 
         <service
             android:name=".session.service.LsfgAccessibilityService"
