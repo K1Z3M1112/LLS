@@ -1,4 +1,4 @@
-package com.firstt175.deepdrop.session.capture
+package com.firstt175.deepdrop.session.diagnostics
 
 import com.firstt175.deepdrop.session.LsfgLog
 
@@ -10,9 +10,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
 
 /**
- * Small, isolated bridge for privileged shell operations through Shizuku.
- * It is intentionally separate from the capture user-service so display
- * operations cannot inherit capture lifecycle state.
+ * Small, isolated bridge for privileged shell operations through Shizuku
+ * (WRITE_SECURE_SETTINGS grant, `wm size/density`, refresh-rate and other
+ * display/performance controls). Not related to screen capture, which is
+ * MediaProjection-only.
  */
 object ShizukuDisplayPermission {
     const val REQUEST_CODE = 17501

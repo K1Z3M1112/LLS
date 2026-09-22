@@ -35,12 +35,11 @@ namespace lsfg_android {
 
 namespace {
 
-// We cap negotiation at 1.3 even if a future loader reports higher: the
-// framegen SPIR-V shaders and every probe in this file were only ever
-// verified up to 1.3 semantics (VulkanMemoryModel, VK_KHR_* promotions),
-// and VkApplicationInfo::apiVersion is a promise about what the app has
-// been tested against, not just an upper bound the driver enforces.
-constexpr uint32_t kMaxNegotiatedApiVersion = VK_API_VERSION_1_3;
+// The runtime (host session and framegen) targets Vulkan 1.1 so it works on every
+// GPU/driver that ships 1.1 or newer. The probes must run at that same level: a shader
+// that only validates at 1.2/1.3 (newer SPIR-V version, promoted capabilities) would
+// pass here and then be rejected at runtime. So negotiation is capped at 1.1.
+constexpr uint32_t kMaxNegotiatedApiVersion = VK_API_VERSION_1_1;
 
 constexpr uint32_t kAllResourceIds[] = {
     255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266,

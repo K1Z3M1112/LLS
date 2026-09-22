@@ -116,7 +116,6 @@ object NativeBridge {
      */
     external fun getGpuVramMb(): Long
 
-
     /**
      * Reports whether the FP16 frame-generation shader path is usable on this
      * device. Two prerequisites must both hold:
@@ -362,6 +361,25 @@ object NativeBridge {
         flowScale: Float,
         /** 0 = RIFE (flownet.param/.bin), 1 = IFRNet (ifrnet.param/.bin). Must match
          *  whichever engine was passed to the [initAiInterpolator] call that loaded it. */
+        engine: Int,
+    ): Int
+
+    /**
+     * AI-FRAMEGEN-EDITOR: one model run producing all (multiplier - 1) frames between
+     * [frameA] and [frameC]. Frame k (1-based) is written at byte offset
+     * (k - 1) * width * height * 4 of [outFrames], which must be a direct ByteBuffer with
+     * room for (multiplier - 1) RGBA8 frames. [frameA]/[frameC] are direct RGBA8 buffers.
+     * Same return codes and [engine] values as [aiInterpolatePreview]; the model must
+     * already be loaded through [initAiInterpolator].
+     */
+    external fun aiInterpolateBatch(
+        frameA: java.nio.ByteBuffer,
+        frameC: java.nio.ByteBuffer,
+        width: Int,
+        height: Int,
+        outFrames: java.nio.ByteBuffer,
+        multiplier: Int,
+        flowScale: Float,
         engine: Int,
     ): Int
 }
