@@ -86,7 +86,6 @@ struct VulkanSession {
     PFN_vkGetPhysicalDeviceSurfaceSupportKHR pfnGetPhysicalDeviceSurfaceSupportKHR = nullptr;
     PFN_vkGetPhysicalDeviceSurfacePresentModesKHR pfnGetPhysicalDeviceSurfacePresentModesKHR = nullptr;
 
-
     // Device UUID packed the way framegen expects: vendorID<<32 | deviceID.
     // Pass this to LSFG_3_1::initialize.
     uint64_t deviceUuid = 0;

@@ -65,16 +65,12 @@ generated frames into a system overlay sitting on top of the target game.
   signals (SIGSEGV, SIGABRT, ...) with stack-walking. Surfaces a one-shot
   dialog on the next launch with a one-tap share intent for bug reports.
 
-### Capture sources
+### Capture source
 
-- **MediaProjection** — always used for the visible frames. Consent prompt
-  on every session start. This is the default source.
-- **Shizuku metrics mode** — still uses MediaProjection for the visible video
-  path. In parallel, Shizuku binds a user service for the selected target UID
-  and provides a privileged timing-only side channel that's fed to native via
-  `reportShizukuTiming` for pacing decisions. Shizuku buffers are never made
-  visible, so a broken or black privileged buffer cannot blackout the
-  overlay.
+- **MediaProjection** — the only capture path. Consent prompt on every
+  session start. The former Shizuku and root capture modes (and the capture
+  mode selector in settings) have been removed. Shizuku is still used, optionally,
+  for display-control features such as granting `WRITE_SECURE_SETTINGS`.
 
 ## Architecture
 
@@ -91,8 +87,7 @@ The critical sequence in `LsfgForegroundService.handleStart`:
    async; launching the target app before the surface is valid leaves the
    overlay empty on PowerVR and some OEMs.
 5. Start `CaptureEngine` (MediaProjection → VirtualDisplay → ImageReader →
-   AHardwareBuffer) and, when enabled, `ShizukuCaptureEngine` for the
-   privileged timing side channel. Then launch the target app via
+   AHardwareBuffer). Then launch the target app via
    `Intent.ACTION_MAIN` and re-assert z-order.
 
 Surface lifecycle is event-driven: `onSurfaceReady(surface, w, h)` can fire
@@ -183,11 +178,10 @@ LSFG-Android-Application/                       # Android Studio project root
                                     #   accessibility, settings drawer,
                                     #   crash reporter, JNI bridge
         prefs/                      # SharedPreferences-backed config + enums
-                                    #   (CaptureSource, OverlayMode, DrawerEdge,
+                                    #   (OverlayMode, DrawerEdge,
                                     #   NpuPostProcessingPreset, etc.)
         LsfgApplication.kt
         FeatureFlags.kt, AppIconLoader.kt
-      aidl/com/lsfg/android/shizuku/   # Shizuku user-service AIDL
       cpp/                          # JNI + CMake — pulls in
                                     #   ../../../../../lsfg-vk-android/framegen/
         lsfg_jni.cpp                # JNI entry points
@@ -232,9 +226,14 @@ build falls back to the debug signing config.
 
 ## Required device features
 
-- **Vulkan 1.2+**.
-- `VK_ANDROID_external_memory_android_hardware_buffer`.
-- `VK_KHR_external_memory` + `VK_KHR_sampler_ycbcr_conversion`.
+- **Vulkan 1.1+**. The app requests API 1.1 everywhere and needs nothing newer
+  (no synchronization2, no timeline semaphores, no Vulkan 1.2/1.3 feature
+  structs), so any GPU/driver that ships Vulkan 1.1 or later is eligible.
+- `VK_ANDROID_external_memory_android_hardware_buffer`, `VK_KHR_external_memory_fd`
+  and `VK_KHR_external_semaphore_fd`.
+- External memory/semaphore, dedicated allocation, memory-requirements2,
+  bind-memory2, maintenance1 and sampler-YCbCr are core in 1.1; they are
+  enabled by name only on drivers that still list them.
 - **`VK_EXT_robustness2`** — required by framegen for `nullDescriptor`.
   Available on recent Adreno (≥ 7xx-class). If absent, the session creates
   fine but `LSFG_3_1::initialize` throws and the app falls back to
@@ -251,10 +250,10 @@ device doesn't support the mandatory ones.
 |---|---|
 | `SYSTEM_ALERT_WINDOW` | Host the overlay over the target game. |
 | `FOREGROUND_SERVICE_MEDIA_PROJECTION` | Run the visible capture path. |
-| `FOREGROUND_SERVICE_SPECIAL_USE` | Run the Shizuku-only timing path without holding a MediaProjection token (subtype: `lsfg_shizuku_capture_pacing`). |
+| `FOREGROUND_SERVICE_SPECIAL_USE` | Keep the idle settings drawer alive before a MediaProjection token is granted (subtype: `lsfg_shizuku_capture_pacing`). |
 | `POST_NOTIFICATIONS` | Persistent foreground-service notification. |
 | `BIND_ACCESSIBILITY_SERVICE` (optional) | Host the overlay as `TYPE_ACCESSIBILITY_OVERLAY` — more robust on strict OEMs. |
-| `moe.shizuku.manager.permission.API_V23` (optional) | Shizuku metrics mode. |
+| `moe.shizuku.manager.permission.API_V23` (optional) | Shizuku-backed display controls (resolution/DPI, refresh rate, etc.). |
 | MediaProjection consent | Granted by the user on every session start. |
 
 ## Limitations

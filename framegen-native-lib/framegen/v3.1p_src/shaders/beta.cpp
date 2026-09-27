@@ -56,14 +56,16 @@ Beta::Beta(Vulkan& vk, std::array<std::array<Core::Image, 2>, 3> inImgs)
     this->buffer = vk.resources.getBuffer(vk.device, 0.5F);
 
     // create internal images/outputs
+    // one scope per stage: scratch images of different stages may share memory
+    this->scope = vk.memory.beginScope();
     const VkExtent2D extent = this->inImgs.at(0).at(0).getExtent();
     for (size_t i = 0; i < 2; i++) {
-        this->tempImgs1.at(i) = Core::Image(vk.device, extent);
-        this->tempImgs2.at(i) = Core::Image(vk.device, extent);
+        this->tempImgs1.at(i) = vk.memory.scratch(vk.device, extent);
+        this->tempImgs2.at(i) = vk.memory.scratch(vk.device, extent);
     }
 
     for (size_t i = 0; i < 6; i++)
-        this->outImgs.at(i) = Core::Image(vk.device,
+        this->outImgs.at(i) = vk.memory.persistent(vk.device,
             { extent.width >> i, extent.height >> i },
             VK_FORMAT_R8_UNORM);
 
@@ -101,6 +103,7 @@ Beta::Beta(Vulkan& vk, std::array<std::array<Core::Image, 2>, 3> inImgs)
 }
 
 void Beta::Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount) {
+    if (this->scope) this->scope->begin(buf);
     // first pass
     const auto extent = this->tempImgs1.at(0).getExtent();
     uint32_t threadsX = (extent.width + 7) >> 3;

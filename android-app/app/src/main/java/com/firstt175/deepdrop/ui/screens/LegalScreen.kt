@@ -1,5 +1,4 @@
 package com.firstt175.deepdrop.ui.screens
-import com.firstt175.deepdrop.ui.produceConfigState
 import com.firstt175.deepdrop.ui.refreshConfigState
 
 import com.firstt175.deepdrop.ui.Routes

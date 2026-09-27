@@ -31,11 +31,9 @@ bool device_supports_vulkan_memory_model();
 
 // Highest Vulkan instance API version this device's loader reports via
 // vkEnumerateInstanceVersion, capped to kMaxNegotiatedApiVersion (see .cpp).
-// This is what create_instance_and_device() actually requests now instead
-// of a hardcoded VK_API_VERSION_1_1, so the render/probe paths always run
-// at the newest API tier the driver supports (e.g. most 2023+ Adreno/Xclipse
-// drivers report 1.3; older Mali/Adreno drivers on Android 10-12 devices
-// often cap at 1.1). Returns 0 if there's no Vulkan loader at all.
+// This is what create_instance_and_device() requests. The runtime targets Vulkan 1.1
+// (so it runs on every GPU with 1.1+), hence the cap: probes run at the same level
+// the render path does. Returns 0 if there's no Vulkan loader at all.
 uint32_t query_negotiated_instance_api_version();
 
 // Human-readable "major.minor.patch" for [apiVersion] (a packed

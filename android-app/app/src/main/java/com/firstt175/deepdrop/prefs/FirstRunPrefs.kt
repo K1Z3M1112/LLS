@@ -5,8 +5,8 @@ import android.content.Context
 /**
  * Tracks whether the user has acknowledged the first-launch disclosure
  * screen ([com.firstt175.deepdrop.ui.screens.AppDisclosureScreen]) that explains what
- * the app requests and does before any permission dialog or the loading
- * screen appears. Shown exactly once — after acknowledgement it never
+ * the app requests and does before any permission dialog appears. Shown
+ * exactly once — after acknowledgement it never
  * reappears, though the same information stays reachable later from
  * Settings → Setup.
  */

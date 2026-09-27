@@ -57,7 +57,6 @@ struct IfrnetInterpolator::Impl {
     // unload() and checked by isLoaded()/interpolate().
     bool cpuLoaded = false;
 
-
     // Single IFRNet forward pass on a specific network: predicts the frame
     // at `timestep` (in [0,1], 0 = exactly frame a, 1 = exactly frame c)
     // between two already-padded, normalized-to-[0,1], full-res RGB Mats.
@@ -184,7 +183,6 @@ void IfrnetInterpolator::unload() {
 bool IfrnetInterpolator::isLoaded() const {
     return impl_->cpuLoaded;
 }
-
 
 int IfrnetInterpolator::interpolate(const uint8_t *frameA, const uint8_t *frameC,
                                      int width, int height,

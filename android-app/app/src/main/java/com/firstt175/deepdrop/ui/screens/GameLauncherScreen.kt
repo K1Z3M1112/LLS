@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -87,7 +88,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.firstt175.deepdrop.R
 import com.firstt175.deepdrop.prefs.LsfgPreferences
-import com.firstt175.deepdrop.prefs.LoadingScreenPrefs
 import com.firstt175.deepdrop.prefs.AppLanguage
 import com.firstt175.deepdrop.prefs.AppLanguagePrefs
 import com.firstt175.deepdrop.session.diagnostics.AdbDisplayController
@@ -97,7 +97,7 @@ import com.firstt175.deepdrop.session.diagnostics.DisplayOverrideState
 import com.firstt175.deepdrop.session.service.LsfgForegroundService
 import com.firstt175.deepdrop.session.LsfgLog
 import com.firstt175.deepdrop.session.diagnostics.PhysicalDisplayInfo
-import com.firstt175.deepdrop.session.capture.ShizukuDisplayPermission
+import com.firstt175.deepdrop.session.diagnostics.ShizukuDisplayPermission
 import com.firstt175.deepdrop.ui.components.LsfgCard
 import com.firstt175.deepdrop.ui.components.LsfgLogoMark
 import com.firstt175.deepdrop.ui.components.SectionHeader
@@ -111,8 +111,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-private const val GAME_LAUNCH_WARP_MS = 1400L
 
 private data class LaunchableApp(
     val label: String,
@@ -312,7 +310,6 @@ private suspend fun applyDisplayProfileAfterLaunch(
     }.getOrNull()
 }
 
-
 @Composable
 fun GameLauncherScreen(nav: NavHostController) {
     val context = LocalContext.current
@@ -369,9 +366,6 @@ fun GameLauncherScreen(nav: NavHostController) {
     // configuration change lands on the target app, not on us.
     LaunchedEffect(launchingApp) {
         val target = launchingApp ?: return@LaunchedEffect
-        if (LoadingScreenPrefs.isEnabled(context)) {
-            delay(GAME_LAUNCH_WARP_MS)
-        }
 
         launchApp(target)
 
@@ -724,18 +718,28 @@ fun GameLauncherScreen(nav: NavHostController) {
                     icon = Icons.Filled.DisplaySettings,
                     label = stringResource(R.string.home_settings),
                     onClick = { nav.navigate(Routes.SETTINGS) },
+                    modifier = Modifier.weight(1f),
                 )
                 LauncherBottomItem(
                     selected = filter == 1,
                     icon = Icons.Filled.Gamepad,
                     label = stringResource(R.string.home_my_games),
                     onClick = { filter = 1 },
+                    modifier = Modifier.weight(1f),
+                )
+                LauncherBottomItem(
+                    selected = false,
+                    icon = Icons.Filled.PhotoLibrary,
+                    label = stringResource(R.string.home_gallery),
+                    onClick = { nav.navigate(Routes.RECORDINGS) },
+                    modifier = Modifier.weight(1f),
                 )
                 LauncherBottomItem(
                     selected = false,
                     icon = Icons.Filled.AccountCircle,
                     label = stringResource(R.string.home_profile),
                     onClick = { nav.navigate(Routes.PROFILE) },
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -782,17 +786,6 @@ fun GameLauncherScreen(nav: NavHostController) {
             }
         }
     }
-
-    // Loading overlay plays over everything else while a tapped game's launch
-    // intent is about to fire (see the launchingApp LaunchedEffect above).
-    // Uses whichever style the user picked in Appearance, same as the app's
-    // own startup gate.
-    if (launchingApp != null) {
-        LoadingOverlay(
-            style = remember { LoadingScreenPrefs.getStyle(context) },
-            title = stringResource(R.string.warp_launching_game, launchingApp?.label.orEmpty()),
-        )
-    }
     }
 }
 
@@ -802,10 +795,10 @@ private fun LauncherBottomItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
-            .width(110.dp)
+        modifier = modifier
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 6.dp),

@@ -4,6 +4,7 @@
 #include "core/commandpool.hpp"
 #include "core/descriptorpool.hpp"
 #include "core/image.hpp"
+#include "core/memorypool.hpp"
 #include "core/device.hpp"
 #include "pool/resourcepool.hpp"
 #include "pool/shaderpool.hpp"
@@ -65,6 +66,19 @@ namespace LSFG::Utils {
     };
 
     ///
+    /// Record image barriers with the classic vkCmdPipelineBarrier (Vulkan 1.0/1.1).
+    /// Takes the synchronization2-style VkImageMemoryBarrier2 description this code base
+    /// uses (only the low 32 bits of the stage/access masks are meaningful here) and
+    /// translates it, so no synchronization2 support is needed from the device.
+    ///
+    /// @param commandBuffer Command buffer in Recording state
+    /// @param barriers Barriers to record in one call
+    /// @param count Number of barriers
+    ///
+    void cmdImageBarriers(VkCommandBuffer commandBuffer,
+        const VkImageMemoryBarrier2* barriers, uint32_t count);
+
+    ///
     /// Upload a DDS file to a Vulkan image.
     ///
     /// @param device The Vulkan device
@@ -104,5 +118,8 @@ namespace LSFG {
 
         Pool::ShaderPool shaders;
         Pool::ResourcePool resources;
+
+        /// Allocator for the internal images (see lsfg_memory.hpp for the switches).
+        Core::MemoryPool memory;
     };
 }

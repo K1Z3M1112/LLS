@@ -18,7 +18,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.BatteryFull
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Security
@@ -68,12 +67,6 @@ fun SettingsHubScreen(nav: NavHostController) {
                 title = stringResource(R.string.nav_overlay_display),
                 subtitle = stringResource(R.string.nav_overlay_display_desc),
                 onClick = { nav.navigate(Routes.OVERLAY_DISPLAY) },
-            )
-            SettingsHubRow(
-                icon = Icons.Filled.AutoAwesome,
-                title = "Image Enhancement",
-                subtitle = "Live post-process • CPU / GPU (Vulkan)",
-                onClick = { nav.navigate(Routes.IMAGE_ENHANCEMENT) },
             )
             SettingsHubRow(
                 icon = Icons.Filled.Movie,

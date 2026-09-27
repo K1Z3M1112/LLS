@@ -2,7 +2,6 @@ package com.firstt175.deepdrop.session.diagnostics
 
 import com.firstt175.deepdrop.session.LsfgLog
 import com.firstt175.deepdrop.session.capture.CaptureEngine
-import com.firstt175.deepdrop.session.capture.ShizukuDisplayPermission
 
 import android.content.Context
 import android.content.pm.ApplicationInfo

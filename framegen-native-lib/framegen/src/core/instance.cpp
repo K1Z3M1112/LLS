@@ -24,7 +24,11 @@ Instance::Instance() {
         .applicationVersion = VK_MAKE_VERSION(0, 0, 1),
         .pEngineName = "lsfg-vk-base",
         .engineVersion = VK_MAKE_VERSION(0, 0, 1),
-        .apiVersion = VK_API_VERSION_1_3
+        // Vulkan 1.1 is the baseline so this runs on every GPU/driver that ships Vulkan
+        // 1.1+. Nothing newer than 1.1 core is required: barriers use the classic
+        // vkCmdPipelineBarrier (see Utils::cmdImageBarriers) and the optional features
+        // (FP16 shaders, robustness2) come from their 1.1-era extensions.
+        .apiVersion = VK_API_VERSION_1_1
     };
     const VkInstanceCreateInfo createInfo{
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,

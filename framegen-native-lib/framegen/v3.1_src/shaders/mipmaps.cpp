@@ -36,7 +36,7 @@ Mipmaps::Mipmaps(Vulkan& vk,
             static_cast<float>(this->inImg_0.getExtent().height) / vk.flowScale)
     };
     for (size_t i = 0; i < 7; i++)
-        this->outImgs.at(i) = Core::Image(vk.device,
+        this->outImgs.at(i) = vk.memory.persistent(vk.device,
             { flowExtent.width >> i, flowExtent.height >> i },
             VK_FORMAT_R8_UNORM);
 

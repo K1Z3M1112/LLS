@@ -64,12 +64,47 @@ BarrierBuilder& BarrierBuilder::addW2R(Core::Image& image) {
 }
 
 void BarrierBuilder::build() const {
-    const VkDependencyInfo dependencyInfo = {
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = static_cast<uint32_t>(this->barriers.size()),
-        .pImageMemoryBarriers = this->barriers.data()
-    };
-    vkCmdPipelineBarrier2(this->commandBuffer->handle(), &dependencyInfo);
+    Utils::cmdImageBarriers(this->commandBuffer->handle(),
+        this->barriers.data(), static_cast<uint32_t>(this->barriers.size()));
+}
+
+void Utils::cmdImageBarriers(VkCommandBuffer commandBuffer,
+        const VkImageMemoryBarrier2* barriers, uint32_t count) {
+    if (count == 0)
+        return;
+
+    // Reused scratch buffer: this runs several times per generated frame.
+    static thread_local std::vector<VkImageMemoryBarrier> converted;
+    converted.clear();
+    converted.reserve(count);
+
+    VkPipelineStageFlags srcStages = 0;
+    VkPipelineStageFlags dstStages = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const VkImageMemoryBarrier2& b = barriers[i];
+        // The stage/access bits used here (compute shader, transfer, top/bottom of
+        // pipe, shader read/write, transfer write) have identical values in the
+        // 32-bit and 64-bit flag types.
+        srcStages |= static_cast<VkPipelineStageFlags>(b.srcStageMask);
+        dstStages |= static_cast<VkPipelineStageFlags>(b.dstStageMask);
+        converted.push_back(VkImageMemoryBarrier{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = static_cast<VkAccessFlags>(b.srcAccessMask),
+            .dstAccessMask = static_cast<VkAccessFlags>(b.dstAccessMask),
+            .oldLayout = b.oldLayout,
+            .newLayout = b.newLayout,
+            .srcQueueFamilyIndex = b.srcQueueFamilyIndex,
+            .dstQueueFamilyIndex = b.dstQueueFamilyIndex,
+            .image = b.image,
+            .subresourceRange = b.subresourceRange
+        });
+    }
+    // Synchronization2 allows an empty ("none") stage mask; the classic call needs one.
+    if (srcStages == 0) srcStages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    if (dstStages == 0) dstStages = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
+    vkCmdPipelineBarrier(commandBuffer, srcStages, dstStages, 0,
+        0, nullptr, 0, nullptr, count, converted.data());
 }
 
 void Utils::uploadImage(const Core::Device& device, const Core::CommandPool& commandPool,
@@ -163,13 +198,8 @@ void Utils::clearImage(const Core::Device& device, Core::Image& image, bool whit
             .layerCount = 1
         }
     };
-    const VkDependencyInfo dependencyInfo = {
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &barrier
-    };
     image.setLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    vkCmdPipelineBarrier2(cmdBuf.handle(), &dependencyInfo);
+    Utils::cmdImageBarriers(cmdBuf.handle(), &barrier, 1);
 
     const float clearValue = white ? 1.0F : 0.0F;
     const VkClearColorValue clearColor = {{ clearValue, clearValue, clearValue, clearValue }};

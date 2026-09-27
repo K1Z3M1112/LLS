@@ -36,7 +36,6 @@ constexpr int kRenderLoopBufferAlloc = -43;
 // and must be torn down normally via shutdownRenderLoop() when the session ends.
 constexpr int kRenderLoopFramegenDisabled = 1;
 
-
 struct RenderLoopConfig {
     uint32_t width;
     uint32_t height;
@@ -68,7 +67,8 @@ struct RenderLoopConfig {
     // ifrnet.param/.bin). Mirrors com.firstt175.deepdrop.prefs.AiEngine's prefValue
     // ordering — keep them in sync. Any other value falls back to RIFE.
     // Ignored when aiBackend is false.
-    int aiEngine = 0;};
+    int aiEngine = 0;
+};
 
 // Initialise render loop: create Vulkan session, allocate ping-pong inputs +
 // (multiplier-1) outputs, initialize framegen, create context. Returns kOk

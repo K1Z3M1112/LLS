@@ -69,12 +69,9 @@ void emit_external_barriers(const Core::CommandBuffer& buf,
     if (barriers.empty())
         return;
 
-    const VkDependencyInfo dependencyInfo{
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size()),
-        .pImageMemoryBarriers = barriers.data(),
-    };
-    vkCmdPipelineBarrier2(buf.handle(), &dependencyInfo);
+    // Classic barrier call: works on plain Vulkan 1.1 (no synchronization2).
+    LSFG::Utils::cmdImageBarriers(buf.handle(), barriers.data(),
+        static_cast<uint32_t>(barriers.size()));
 }
 
 } // namespace
@@ -83,6 +80,7 @@ void emit_external_barriers(const Core::CommandBuffer& buf,
 Context::Context(Vulkan& vk,
         int in0, int in1, const std::vector<int>& outN,
         VkExtent2D extent, VkFormat format) {
+    vk.memory.beginContext();
     // import input images
     this->inImg_0 = Core::Image(vk.device, extent, format,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -125,6 +123,9 @@ Context::Context(Vulkan& vk,
         this->delta.at(2).getOutImage1(),
         this->delta.at(2).getOutImage2(),
         outN, format);
+
+    // bind the pooled image memory now that every image of this context exists
+    vk.memory.finalize(vk.device);
 }
 
 void Context::present(Vulkan& vk,
@@ -404,6 +405,7 @@ Context::Context(Vulkan& vk,
         AHardwareBuffer* in0, AHardwareBuffer* in1,
         const std::vector<AHardwareBuffer*>& outN,
         VkExtent2D extent, VkFormat format) {
+    vk.memory.beginContext();
     // import inputs from AHB
     this->inImg_0 = Core::Image(vk.device, extent, format,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -457,6 +459,9 @@ Context::Context(Vulkan& vk,
         this->delta.at(2).getOutImage1(),
         this->delta.at(2).getOutImage2(),
         std::move(outImgs));
+
+    // bind the pooled image memory now that every image of this context exists
+    vk.memory.finalize(vk.device);
 }
 
 #endif // __ANDROID__

@@ -9,6 +9,7 @@
 #include "common/utils.hpp"
 
 #include <array>
+#include <memory>
 #include <cstdint>
 
 namespace LSFG_3_1::Shaders {
@@ -53,6 +54,7 @@ namespace LSFG_3_1::Shaders {
         std::array<Core::DescriptorSet, 3> lastDescriptorSet;
 
         Core::Image inImg;
+        std::shared_ptr<Core::ScratchScope> scope;
         std::array<Core::Image, 2> tempImgs1;
         std::array<Core::Image, 2> tempImgs2;
         std::array<Core::Image, 4> tempImgs3;

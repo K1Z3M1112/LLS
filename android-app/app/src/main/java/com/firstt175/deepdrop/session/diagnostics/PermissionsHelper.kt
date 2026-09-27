@@ -1,6 +1,5 @@
 package com.firstt175.deepdrop.session.diagnostics
 
-import com.firstt175.deepdrop.session.capture.ShizukuDisplayPermission
 import com.firstt175.deepdrop.session.service.LsfgAccessibilityService
 
 import android.content.Context

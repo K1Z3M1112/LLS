@@ -45,14 +45,16 @@ Alpha::Alpha(Vulkan& vk, Core::Image inImg) : inImg(std::move(inImg)) {
         this->lastDescriptorSet.at(i) = Core::DescriptorSet(vk.device, vk.descriptorPool, this->shaderModules.at(3));
 
     // create internal images/outputs
+    // one scope per stage: scratch images of different stages may share memory
+    this->scope = vk.memory.beginScope();
     const VkExtent2D extent = this->inImg.getExtent();
     const VkExtent2D halfExtent = {
         .width = (extent.width + 1) >> 1,
         .height = (extent.height + 1) >> 1
     };
     for (size_t i = 0; i < 2; i++) {
-        this->tempImgs1.at(i) = Core::Image(vk.device, halfExtent);
-        this->tempImgs2.at(i) = Core::Image(vk.device, halfExtent);
+        this->tempImgs1.at(i) = vk.memory.scratch(vk.device, halfExtent);
+        this->tempImgs2.at(i) = vk.memory.scratch(vk.device, halfExtent);
     }
 
     const VkExtent2D quarterExtent = {
@@ -60,9 +62,9 @@ Alpha::Alpha(Vulkan& vk, Core::Image inImg) : inImg(std::move(inImg)) {
         .height = (halfExtent.height + 1) >> 1
     };
     for (size_t i = 0; i < 4; i++) {
-        this->tempImgs3.at(i) = Core::Image(vk.device, quarterExtent);
+        this->tempImgs3.at(i) = vk.memory.scratch(vk.device, quarterExtent);
         for (size_t j = 0; j < 3; j++)
-            this->outImgs.at(j).at(i) = Core::Image(vk.device, quarterExtent);
+            this->outImgs.at(j).at(i) = vk.memory.persistent(vk.device, quarterExtent);
     }
 
     // hook up shaders
@@ -90,6 +92,7 @@ Alpha::Alpha(Vulkan& vk, Core::Image inImg) : inImg(std::move(inImg)) {
 }
 
 void Alpha::Dispatch(const Core::CommandBuffer& buf, uint64_t frameCount) {
+    if (this->scope) this->scope->begin(buf);
     // first pass
     const auto halfExtent = this->tempImgs1.at(0).getExtent();
     uint32_t threadsX = (halfExtent.width + 7) >> 3;

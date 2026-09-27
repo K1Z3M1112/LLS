@@ -16,31 +16,16 @@
 -keep class * extends android.content.ContentProvider
 -keep class * extends android.accessibilityservice.AccessibilityService
 
-# AIDL-generated stubs for Shizuku user-service IPC.
--keep class com.firstt175.deepdrop.shizuku.** { *; }
--keep interface com.firstt175.deepdrop.shizuku.** { *; }
-
 # Shizuku API uses reflection / dynamic proxies for the manager service binder.
 -keep class rikka.shizuku.** { *; }
 -keep interface rikka.shizuku.** { *; }
 -keep class moe.shizuku.** { *; }
 -dontwarn rikka.shizuku.**
 
-# Shizuku spawns ShizukuCaptureUserService in a separate process and instantiates
-# it by class name via reflection (Class.forName(...).newInstance()). The class
-# name is also passed to bindUserService through ComponentName, which uses the
-# obfuscated name. Keep both the class and its no-arg constructor verbatim.
--keep class com.firstt175.deepdrop.session.capture.ShizukuCaptureUserService { *; }
-
-# libsu spawns a remote root process and resolves classes by name across the IPC boundary.
+# libsu (core) is only used for the read-only root status row on the device profile screen.
 -keep class com.topjohnwu.superuser.** { *; }
 -keep interface com.topjohnwu.superuser.** { *; }
 -dontwarn com.topjohnwu.superuser.**
-
-# RootCaptureService extends libsu's RootService and is instantiated by name in
-# the spawned root process. Same constraint as ShizukuCaptureUserService.
--keep class com.firstt175.deepdrop.session.capture.RootCaptureService { *; }
--keep class com.firstt175.deepdrop.session.capture.RootCaptureService$* { *; }
 
 # Compose runtime needs Signature/InnerClasses for state-handling reflection.
 -keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, SourceFile, LineNumberTable
@@ -58,3 +43,13 @@
 
 # Stop R8 from stripping the line numbers we use to map native crash reports.
 -renamesourcefileattribute SourceFile
+
+# Video editor preview: ExoPlayer's video-effects path (CompositingVideoSinkProvider) looks up
+# ScaleAndRotateTransformation.Builder by name via reflection whenever a clip carries a rotation.
+# Media3 1.4.1 ships keep rules for its other two effect lookups but not this one, so without this
+# R8 renames it and previewing a rotated (e.g. portrait) recording crashes in release builds.
+-keep class androidx.media3.effect.ScaleAndRotateTransformation$Builder {
+    <init>();
+    androidx.media3.effect.ScaleAndRotateTransformation$Builder setRotationDegrees(float);
+    androidx.media3.effect.ScaleAndRotateTransformation build();
+}

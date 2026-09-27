@@ -1,31 +1,21 @@
 package com.firstt175.deepdrop.ui.screens
 
 import android.app.Activity
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.firstt175.deepdrop.R
 import com.firstt175.deepdrop.prefs.AppAppearancePrefs
 import com.firstt175.deepdrop.prefs.AppThemeMode
-import com.firstt175.deepdrop.prefs.LoadingScreenPrefs
-import com.firstt175.deepdrop.prefs.LoadingStyle
 import com.firstt175.deepdrop.ui.components.LsfgCard
 import com.firstt175.deepdrop.ui.components.LsfgPrimaryButton
 import com.firstt175.deepdrop.ui.components.LsfgTopBar
@@ -34,8 +24,6 @@ import com.firstt175.deepdrop.ui.components.LsfgTopBar
 fun AppearanceSettingsScreen(nav: NavHostController) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var state by remember { mutableStateOf(AppAppearancePrefs.get(context)) }
-    var loadingScreenEnabled by remember { mutableStateOf(LoadingScreenPrefs.isEnabled(context)) }
-    var loadingStyle by remember { mutableStateOf(LoadingScreenPrefs.getStyle(context)) }
 
     fun apply() {
         AppAppearancePrefs.set(context, state)
@@ -109,32 +97,6 @@ fun AppearanceSettingsScreen(nav: NavHostController) {
             )
         }
 
-        LsfgCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.PlayArrow, null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Text(androidx.compose.ui.res.stringResource(R.string.appearance_startup), style = MaterialTheme.typography.titleMedium)
-            }
-            SettingSwitch(
-                title = androidx.compose.ui.res.stringResource(R.string.appearance_loading_screen),
-                desc = androidx.compose.ui.res.stringResource(R.string.appearance_loading_screen_desc),
-                checked = loadingScreenEnabled,
-                onCheckedChange = {
-                    loadingScreenEnabled = it
-                    LoadingScreenPrefs.setEnabled(context, it)
-                },
-            )
-            AnimatedVisibility(visible = loadingScreenEnabled) {
-                LoadingStylePicker(
-                    selected = loadingStyle,
-                    onSelected = {
-                        loadingStyle = it
-                        LoadingScreenPrefs.setStyle(context, it)
-                    },
-                )
-            }
-        }
-
         LsfgPrimaryButton(
             text = androidx.compose.ui.res.stringResource(R.string.appearance_apply),
             onClick = ::apply,
@@ -156,58 +118,6 @@ private fun AppearanceSlider(
                 color = MaterialTheme.colorScheme.primary)
         }
         Slider(value = value, onValueChange = onValueChange, valueRange = min..max)
-    }
-}
-
-/**
- * Lets the user preview and pick one of the [LoadingStyle] visuals for the
- * startup gate (and the matching pre-game-launch overlay). The preview box
- * renders the real overlay composable — live and animated — clipped down to
- * a small rounded panel rather than a static thumbnail, so what's picked is
- * exactly what will be shown.
- */
-@Composable
-private fun LoadingStylePicker(selected: LoadingStyle, onSelected: (LoadingStyle) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(140.dp)
-                .clip(RoundedCornerShape(16.dp)),
-        ) {
-            LoadingOverlay(style = selected)
-        }
-        Spacer(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            LoadingStyle.entries.forEach { style ->
-                val isSelected = style == selected
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            if (isSelected) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceVariant,
-                        )
-                        .border(
-                            width = if (isSelected) 0.dp else 1.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                            shape = RoundedCornerShape(10.dp),
-                        )
-                        .selectable(selected = isSelected, onClick = { onSelected(style) })
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        text = androidx.compose.ui.res.stringResource(style.labelRes),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
     }
 }
 
